@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+import configparser
+import os
+import subprocess
+import sys
+from pathlib import Path
+import argparse
+
+CONFIG_FILE = Path.home() / ".sshx"
+
+if not CONFIG_FILE.exists():
+    print(f"{CONFIG_FILE} not found")
+    sys.exit(1)
+
+# -----------------------------
+# 引数解析（モードのみ）
+# -----------------------------
+parser = argparse.ArgumentParser(description="Select server and run ssh/sftp")
+parser.add_argument(
+    "-m", "--mode", choices=["ssh", "sftp"], default="ssh",
+    help="Mode to run (ssh or sftp)"
+)
+args = parser.parse_args()
+mode = args.mode
+
+# -----------------------------
+# ini ファイル読み込み
+# -----------------------------
+config = configparser.ConfigParser()
+config.optionxform = str
+config.read(CONFIG_FILE)
+
+sections = config.sections()
+if not sections:
+    print(f"No servers found in {CONFIG_FILE}")
+    sys.exit(0)
+
+# -----------------------------
+# サーバ選択（fzf）
+# -----------------------------
+fzf = subprocess.run(
+    ["fzf", "--prompt=sshx> "],
+    input="\n".join(sections),
+    text=True,
+    capture_output=True
+)
+selected = fzf.stdout.strip()
+if not selected:
+    sys.exit(0)
+
+section = config[selected]
+
+aws_profile = section.get("aws_profile", "")
+host = section.get("host")
+user = section.get("user")
+identity_file = section.get("identity_file", "")
+
+if not host or not user:
+    print(f"{selected} missing host or user")
+    sys.exit(1)
+
+# -----------------------------
+# 実行環境変数
+# -----------------------------
+env = os.environ.copy()
+if aws_profile:
+    env["AWS_PROFILE"] = aws_profile
+
+# -----------------------------
+# コマンド構築
+# -----------------------------
+if mode == "ssh":
+    cmd = ["ssh"]
+    if identity_file:
+        cmd.extend(["-i", identity_file])
+    cmd.append(f"{user}@{host}")
+
+elif mode == "sftp":
+    cmd = ["sftp"]
+    if identity_file:
+        cmd.extend(["-i", identity_file])
+    cmd.append(f"{user}@{host}")
+
+# -----------------------------
+# コマンド実行
+# -----------------------------
+os.execvpe(cmd[0], cmd, env)

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# awsl - AWS SSOログイン用スクリプト（AWS_PROFILEは変更しない）
+
+PROFILES=$(aws configure list-profiles)
+if [ -z "$PROFILES" ]; then
+    echo "No AWS profiles found."
+    exit 1
+fi
+
+PROFILE=$(echo "$PROFILES" | fzf --prompt="Select AWS SSO Profile> ")
+if [ -z "$PROFILE" ]; then
+    echo "No profile selected. Aborting."
+    exit 1
+fi
+
+echo "Logging in to SSO for profile: $PROFILE"
+AWS_PROFILE="$PROFILE" aws sso login
