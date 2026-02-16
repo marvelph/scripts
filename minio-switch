@@ -156,12 +156,23 @@ def init_bucket(args, config):
         print(f"バケット {mc_path(alias_name, bucket)} が存在しません。")
         return
 
+    snapshot = snapshot_bucket_name(bucket, branch)
+    if bucket_exists(alias_name, snapshot):
+        print(f"退避バケット {mc_path(alias_name, snapshot)} がすでに存在します。")
+        return
+
+    ensure_bucket(alias_name, snapshot)
+    clone_bucket(alias_name, bucket, alias_name, snapshot)
+
     config["buckets"][key] = {
         "current": branch,
         "branches": [branch],
     }
     save_config(config)
-    print(f"{key} を管理下に追加しました。current ブランチ: {branch}")
+    print(
+        f"{key} を管理下に追加しました。current ブランチ: {branch}。"
+        f"{mc_path(alias_name, bucket)} のコピーを {mc_path(alias_name, snapshot)} に作成しました。"
+    )
 
 
 def branch_add(args, config):
@@ -256,6 +267,12 @@ def switch_branch(args, config):
     current_snapshot = snapshot_bucket_name(bucket, current_branch)
     target_snapshot = snapshot_bucket_name(bucket, target_branch)
 
+    if not bucket_exists(alias_name, current_snapshot):
+        print(
+            f"退避バケット {mc_path(alias_name, current_snapshot)} が存在しません。"
+            "先に init を実行してください。"
+        )
+        return
     if not bucket_exists(alias_name, target_snapshot):
         print(f"退避バケット {mc_path(alias_name, target_snapshot)} が存在しません。")
         return
@@ -263,7 +280,6 @@ def switch_branch(args, config):
         print(f"論理バケット {mc_path(alias_name, bucket)} が存在しません。")
         return
 
-    ensure_bucket(alias_name, current_snapshot)
     clone_bucket(alias_name, bucket, alias_name, current_snapshot)
 
     clone_bucket(alias_name, target_snapshot, alias_name, bucket)

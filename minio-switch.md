@@ -58,6 +58,8 @@
 ## コマンド仕様
 ### `init --bucket <bucket> --branch <branch>`
 - 既存の論理バケットを管理下に追加する。
+- 退避バケット `<bucket>--<branch>` を作成し、現在の論理バケット内容をコピーする。
+- 退避バケットが既に存在する場合は安全のため中止する。
 - 例: `minio-switch --alias local init --bucket app-assets --branch main`
 
 ### `branch-add --bucket <bucket> --branch <branch>`
@@ -97,9 +99,10 @@
 - オブジェクトコピーは `mc mirror --overwrite --remove` を使用。
 - `switch` / `branch-add` ではバケットを再作成しない（既存バケット設定を維持する）。
 - `switch` は次の順序で実行する。
-  1. current 側退避バケットがなければ作成
-  2. 論理バケット -> current 退避へミラー
-  3. target 退避 -> 論理バケットへミラー
+  1. current 側退避バケットの存在を確認
+  2. target 側退避バケットの存在を確認
+  3. 論理バケット -> current 退避へミラー
+  4. target 退避 -> 論理バケットへミラー
 - 途中失敗時は、論理バケットが空/不完全になる可能性があるため、`status` と `mc ls` で状態確認して再実行する。
 
 ## 運用イメージ
