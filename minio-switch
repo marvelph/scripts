@@ -57,9 +57,41 @@ def config_key(alias_name, bucket):
 
 def bucket_exists(alias_name, bucket):
     result = subprocess.run(
-        ["mc", "ls", mc_path(alias_name, bucket)], capture_output=True, text=True
+        ["mc", "--json", "stat", mc_path(alias_name, bucket)],
+        capture_output=True,
+        text=True,
     )
-    return result.returncode == 0
+    if result.returncode == 0:
+        return True
+
+    events = []
+    for stream in (result.stdout, result.stderr):
+        for line in stream.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    for event in events:
+        if event.get("status") != "error":
+            continue
+        error = event.get("error", {})
+        cause = error.get("cause", {})
+        message = str(error.get("message", ""))
+        cause_message = str(cause.get("message", ""))
+        merged = f"{message} {cause_message}".lower()
+        if "does not exist" in merged or "not exist" in merged or "not found" in merged:
+            return False
+
+    detail = (
+        result.stderr.strip()
+        or result.stdout.strip()
+        or f"mc --json stat {mc_path(alias_name, bucket)}"
+    )
+    raise RuntimeError(f"バケット存在確認に失敗しました: {detail}")
 
 
 def ensure_bucket(alias_name, bucket):
