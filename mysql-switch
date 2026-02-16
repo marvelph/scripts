@@ -13,6 +13,7 @@ import tempfile
 CONFIG_PATH = os.path.expanduser("~/.mysql-switch.json")
 CONFIG_VERSION = 1
 REQUIRED_COMMANDS = ("mysqldump", "mysql")
+READONLY_COMMANDS = ("mysql",)
 CONNECTION_ARGS = {}
 DB_NAME_MAX_LEN = 64
 BRANCH_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -163,8 +164,9 @@ def mysql_client_args(params):
     return args
 
 
-def ensure_required_commands():
-    missing = [cmd for cmd in REQUIRED_COMMANDS if shutil.which(cmd) is None]
+def ensure_required_commands(commands=None):
+    target = commands if commands is not None else REQUIRED_COMMANDS
+    missing = [cmd for cmd in target if shutil.which(cmd) is None]
     if missing:
         missing_list = ", ".join(missing)
         raise RuntimeError(
@@ -567,8 +569,10 @@ def main():
         "user": args.user,
         "password": args.password,
     }
-    if args.command in {"init", "branch-add", "branch-remove", "switch", "verify"}:
-        ensure_required_commands()
+    if args.command in {"init", "branch-add", "branch-remove", "switch"}:
+        ensure_required_commands(REQUIRED_COMMANDS)
+    elif args.command == "verify":
+        ensure_required_commands(READONLY_COMMANDS)
     config = load_config()
 
     try:

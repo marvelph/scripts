@@ -13,6 +13,7 @@ import tempfile
 CONFIG_PATH = os.path.expanduser("~/.postgres-switch.json")
 CONFIG_VERSION = 1
 REQUIRED_COMMANDS = ("pg_dump", "psql")
+READONLY_COMMANDS = ("psql",)
 CONNECTION_ARGS = {}
 MAINTENANCE_DB = "postgres"
 DB_NAME_MAX_LEN = 63
@@ -132,8 +133,9 @@ def run_psql(sql, database=MAINTENANCE_DB):
     return result.stdout
 
 
-def ensure_required_commands():
-    missing = [cmd for cmd in REQUIRED_COMMANDS if shutil.which(cmd) is None]
+def ensure_required_commands(commands=None):
+    target = commands if commands is not None else REQUIRED_COMMANDS
+    missing = [cmd for cmd in target if shutil.which(cmd) is None]
     if missing:
         missing_list = ", ".join(missing)
         raise RuntimeError(
@@ -608,8 +610,10 @@ def main():
         "password": args.password,
     }
 
-    if args.command in {"init", "branch-add", "branch-remove", "switch", "verify"}:
-        ensure_required_commands()
+    if args.command in {"init", "branch-add", "branch-remove", "switch"}:
+        ensure_required_commands(REQUIRED_COMMANDS)
+    elif args.command == "verify":
+        ensure_required_commands(READONLY_COMMANDS)
 
     config = load_config()
 
