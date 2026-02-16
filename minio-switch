@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -12,6 +14,7 @@ CONFIG_PATH = os.path.expanduser("~/.minio-switch.json")
 CONFIG_VERSION = 1
 REQUIRED_COMMANDS = ("mc",)
 BRANCH_PATTERN = re.compile(r"^[a-z0-9-]+$")
+LOCK_DIR = os.path.expanduser("~/.minio-switch-locks")
 
 
 def load_config():
@@ -37,6 +40,29 @@ def save_config(config):
         os.fsync(tf.fileno())
         temp_path = tf.name
     os.replace(temp_path, CONFIG_PATH)
+
+
+def lock_name_for_bucket(alias_name, bucket):
+    key = f"{alias_name}__{bucket}"
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", key)
+    return os.path.join(LOCK_DIR, f"{safe}.lock")
+
+
+@contextlib.contextmanager
+def bucket_lock(alias_name, bucket):
+    os.makedirs(LOCK_DIR, exist_ok=True)
+    lock_path = lock_name_for_bucket(alias_name, bucket)
+    with open(lock_path, "w", encoding="utf-8") as lf:
+        try:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError(
+                f"{alias_name}/{bucket} は他の minio-switch プロセスで処理中です。完了後に再実行してください。"
+            )
+        try:
+            yield
+        finally:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
 
 def ensure_required_commands():
@@ -422,16 +448,19 @@ def main():
     config = load_config()
 
     try:
-        if args.command == "init":
-            init_bucket(args, config)
-        elif args.command == "branch-add":
-            branch_add(args, config)
-        elif args.command == "branch-remove":
-            branch_remove(args, config)
-        elif args.command == "switch":
-            switch_branch(args, config)
-        elif args.command == "reset":
-            reset_bucket(args, config)
+        write_commands = {"init", "branch-add", "branch-remove", "switch", "reset"}
+        if args.command in write_commands:
+            with bucket_lock(args.alias, args.bucket):
+                if args.command == "init":
+                    init_bucket(args, config)
+                elif args.command == "branch-add":
+                    branch_add(args, config)
+                elif args.command == "branch-remove":
+                    branch_remove(args, config)
+                elif args.command == "switch":
+                    switch_branch(args, config)
+                elif args.command == "reset":
+                    reset_bucket(args, config)
         elif args.command == "status":
             status(args, config)
         elif args.command == "list":

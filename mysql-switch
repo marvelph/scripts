@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -16,6 +18,7 @@ DB_NAME_MAX_LEN = 64
 BRANCH_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 CHARSET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 COLLATION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
+LOCK_DIR = os.path.expanduser("~/.mysql-switch-locks")
 
 
 def load_config():
@@ -41,6 +44,28 @@ def save_config(config):
         os.fsync(tf.fileno())
         temp_path = tf.name
     os.replace(temp_path, CONFIG_PATH)
+
+
+def lock_name_for_database(database):
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", database)
+    return os.path.join(LOCK_DIR, f"{safe}.lock")
+
+
+@contextlib.contextmanager
+def database_lock(database):
+    os.makedirs(LOCK_DIR, exist_ok=True)
+    lock_path = lock_name_for_database(database)
+    with open(lock_path, "w", encoding="utf-8") as lf:
+        try:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError(
+                f"{database} は他の mysql-switch プロセスで処理中です。完了後に再実行してください。"
+            )
+        try:
+            yield
+        finally:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
 
 def qident(name):
@@ -468,16 +493,19 @@ def main():
     config = load_config()
 
     try:
-        if args.command == "init":
-            init_db(args, config)
-        elif args.command == "branch-add":
-            branch_add(args, config)
-        elif args.command == "branch-remove":
-            branch_remove(args, config)
-        elif args.command == "switch":
-            switch_branch(args, config)
-        elif args.command == "reset":
-            reset_db(args, config)
+        write_commands = {"init", "branch-add", "branch-remove", "switch", "reset"}
+        if args.command in write_commands:
+            with database_lock(args.database):
+                if args.command == "init":
+                    init_db(args, config)
+                elif args.command == "branch-add":
+                    branch_add(args, config)
+                elif args.command == "branch-remove":
+                    branch_remove(args, config)
+                elif args.command == "switch":
+                    switch_branch(args, config)
+                elif args.command == "reset":
+                    reset_db(args, config)
         elif args.command == "status":
             status(args, config)
         elif args.command == "list":
