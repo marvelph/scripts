@@ -13,6 +13,8 @@ REQUIRED_COMMANDS = ("mysqldump", "mysql")
 CONNECTION_ARGS = {}
 DB_NAME_MAX_LEN = 64
 BRANCH_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+CHARSET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
+COLLATION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 
 
 def load_config():
@@ -80,6 +82,25 @@ def db_exists(database):
     return bool(out.strip())
 
 
+def get_db_defaults(database):
+    out = run_mysql_sql(
+        "SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME "
+        "FROM information_schema.SCHEMATA "
+        f"WHERE SCHEMA_NAME = {qstr(database)}"
+    ).strip()
+    if not out:
+        raise RuntimeError(f"データベース {database} のデフォルト設定を取得できませんでした。")
+    parts = out.split("\t")
+    if len(parts) != 2:
+        raise RuntimeError(f"データベース {database} のデフォルト設定の形式が不正です。")
+    charset, collate = parts
+    if not CHARSET_NAME_PATTERN.fullmatch(charset):
+        raise RuntimeError(f"不正な character set 名を検出しました: {charset}")
+    if not COLLATION_NAME_PATTERN.fullmatch(collate):
+        raise RuntimeError(f"不正な collation 名を検出しました: {collate}")
+    return charset, collate
+
+
 def confirm_or_abort(prompt, auto_yes=False):
     if auto_yes:
         return True
@@ -144,9 +165,13 @@ def clone_database(source_db, target_db):
         raise RuntimeError("mysqldump/mysql によるコピーに失敗しました。")
 
 
-def recreate_database(database):
+def recreate_database(database, defaults=None):
     run_mysql_sql(f"DROP DATABASE IF EXISTS {qident(database)}")
-    run_mysql_sql(f"CREATE DATABASE {qident(database)}")
+    create_sql = f"CREATE DATABASE {qident(database)}"
+    if defaults:
+        charset, collate = defaults
+        create_sql += f" DEFAULT CHARACTER SET {charset} DEFAULT COLLATE {collate}"
+    run_mysql_sql(create_sql)
 
 
 def init_db(args, config):
@@ -180,11 +205,12 @@ def branch_add(args, config):
     if db_exists(snapshot_db):
         print(f"退避DB {snapshot_db} がすでに存在します。")
         return
-    recreate_database(snapshot_db)
+    source_defaults = get_db_defaults(database)
+    recreate_database(snapshot_db, source_defaults)
     try:
         clone_database(database, snapshot_db)
     except Exception:
-        recreate_database(snapshot_db)
+        recreate_database(snapshot_db, source_defaults)
         raise
 
     config["databases"][database]["branches"].append(branch)
@@ -245,10 +271,13 @@ def switch_branch(args, config):
         print(f"論理DB {database} が存在しません。")
         return
 
-    recreate_database(current_snapshot)
+    current_defaults = get_db_defaults(database)
+    target_defaults = get_db_defaults(target_snapshot)
+
+    recreate_database(current_snapshot, current_defaults)
     clone_database(database, current_snapshot)
 
-    recreate_database(database)
+    recreate_database(database, target_defaults)
     clone_database(target_snapshot, database)
 
     db_info["current"] = target_branch
