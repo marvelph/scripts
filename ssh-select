@@ -26,9 +26,13 @@ mode = args.mode
 # -----------------------------
 # ini ファイル読み込み
 # -----------------------------
-config = configparser.ConfigParser()
+config = configparser.ConfigParser(interpolation=None)
 config.optionxform = str
-config.read(CONFIG_FILE)
+try:
+    config.read(CONFIG_FILE)
+except configparser.Error as e:
+    print(f"Failed to parse {CONFIG_FILE}: {e}", file=sys.stderr)
+    sys.exit(1)
 
 sections = config.sections()
 if not sections:
@@ -38,15 +42,28 @@ if not sections:
 # -----------------------------
 # サーバ選択（fzf）
 # -----------------------------
-fzf = subprocess.run(
-    ["fzf", "--prompt=ssh-select> "],
-    input="\n".join(sections),
-    text=True,
-    capture_output=True
-)
-selected = fzf.stdout.strip()
-if not selected:
+try:
+    fzf = subprocess.run(
+        ["fzf", "--prompt=ssh-select> "],
+        input="\n".join(sections),
+        text=True,
+        capture_output=True
+    )
+except FileNotFoundError:
+    print("fzf is not installed or not found in PATH", file=sys.stderr)
+    sys.exit(1)
+
+if fzf.returncode == 0:
+    selected = fzf.stdout.strip()
+    if not selected:
+        sys.exit(0)
+elif fzf.returncode in (1, 130):
+    # 1: no match / no selection, 130: interrupted (Ctrl-C)
     sys.exit(0)
+else:
+    err = fzf.stderr.strip() or f"fzf exited with code {fzf.returncode}"
+    print(f"Failed to select server: {err}", file=sys.stderr)
+    sys.exit(1)
 
 section = config[selected]
 

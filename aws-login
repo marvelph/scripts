@@ -1,17 +1,106 @@
 #!/usr/bin/env bash
-# aws-login - AWS SSOログイン用スクリプト
+# aws-login - Select an AWS SSO profile and run aws sso login
 
-PROFILES=$(aws configure list-profiles)
-if [ -z "$PROFILES" ]; then
-    echo "No AWS profiles found."
+set -euo pipefail
+
+die() {
+    echo "Error: $*" >&2
     exit 1
+}
+
+need_cmd() {
+    command -v "$1" >/dev/null 2>&1 || die "'$1' command is required."
+}
+
+need_cmd aws
+
+profiles=()
+while IFS= read -r p; do
+    [[ -n "$p" ]] && profiles+=("$p")
+done < <(aws configure list-profiles)
+(( ${#profiles[@]} > 0 )) || die "No AWS profiles found."
+
+config_file="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
+
+get_sso_profiles_from_config() {
+    local file="$1"
+    [[ -r "$file" ]] || return 0
+
+    awk '
+    function emit_section() {
+        if (profile != "" && (has_sso_start_url || has_sso_session || (has_account && has_role))) {
+            print profile
+        }
+    }
+    function reset_flags() {
+        has_sso_start_url = 0
+        has_sso_session = 0
+        has_account = 0
+        has_role = 0
+    }
+    /^\[.*\]$/ {
+        emit_section()
+        profile = ""
+        reset_flags()
+
+        if ($0 ~ /^\[profile[[:space:]]+/) {
+            profile = $0
+            sub(/^\[profile[[:space:]]+/, "", profile)
+            sub(/\]$/, "", profile)
+        } else if ($0 ~ /^\[default\]$/) {
+            profile = "default"
+        }
+        next
+    }
+    {
+        if (profile == "") {
+            next
+        }
+        if ($0 ~ /^[[:space:]]*sso_start_url[[:space:]]*=/) {
+            has_sso_start_url = 1
+        } else if ($0 ~ /^[[:space:]]*sso_session[[:space:]]*=/) {
+            has_sso_session = 1
+        } else if ($0 ~ /^[[:space:]]*sso_account_id[[:space:]]*=/) {
+            has_account = 1
+        } else if ($0 ~ /^[[:space:]]*sso_role_name[[:space:]]*=/) {
+            has_role = 1
+        }
+    }
+    END {
+        emit_section()
+    }
+    ' "$file"
+}
+
+sso_profile_list="$(get_sso_profiles_from_config "$config_file")"
+sso_profiles=()
+
+for p in "${profiles[@]}"; do
+    if [[ -n "$sso_profile_list" ]] && printf '%s\n' "$sso_profile_list" | grep -Fxq -- "$p"; then
+        sso_profiles+=("$p")
+    fi
+done
+
+if (( ${#sso_profiles[@]} == 0 )); then
+    sso_profiles=("${profiles[@]}")
 fi
 
-PROFILE=$(echo "$PROFILES" | fzf --prompt="Select AWS SSO Profile> ")
-if [ -z "$PROFILE" ]; then
-    echo "No profile selected. Aborting."
-    exit 1
-fi
+choose_profile() {
+    if command -v fzf >/dev/null 2>&1; then
+        printf '%s\n' "${sso_profiles[@]}" | fzf --prompt="Select AWS SSO Profile> " --height=40% --reverse
+        return
+    fi
 
-echo "Logging in to SSO for profile: $PROFILE"
-AWS_PROFILE="$PROFILE" aws sso login
+    echo "fzf not found; falling back to numbered selection." >&2
+    select choice in "${sso_profiles[@]}"; do
+        [[ -n "${choice:-}" ]] || { echo "Invalid selection." >&2; continue; }
+        echo "$choice"
+        return
+    done
+}
+
+profile="$(choose_profile)"
+[[ -n "$profile" ]] || die "No profile selected."
+
+echo "Logging in to SSO for profile: $profile"
+AWS_PROFILE="$profile" aws sso login
