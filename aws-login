@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# awsl - AWS SSOログイン用スクリプト（AWS_PROFILEは変更しない）
+# aws-login - AWS SSOログイン用スクリプト
 
 PROFILES=$(aws configure list-profiles)
 if [ -z "$PROFILES" ]; then

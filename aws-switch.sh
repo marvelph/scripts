@@ -1,6 +1,6 @@
-# awsp.sh - AWS CLI プロファイル切替用関数
+# aws-switch.sh - AWS CLI プロファイル切替用関数
 
-awsp() {
+aws-switch() {
     PROFILES=$(aws configure list-profiles)
     if [ -z "$PROFILES" ]; then
         echo "No AWS profiles found."

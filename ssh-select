@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 import argparse
 
-CONFIG_FILE = Path.home() / ".sshx"
+CONFIG_FILE = Path.home() / ".ssh-select"
 
 if not CONFIG_FILE.exists():
     print(f"{CONFIG_FILE} not found")
@@ -39,7 +39,7 @@ if not sections:
 # サーバ選択（fzf）
 # -----------------------------
 fzf = subprocess.run(
-    ["fzf", "--prompt=sshx> "],
+    ["fzf", "--prompt=ssh-select> "],
     input="\n".join(sections),
     text=True,
     capture_output=True
