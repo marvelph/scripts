@@ -1,0 +1,402 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+CONFIG_PATH = os.path.expanduser("~/.mysql-switch.json")
+CONFIG_VERSION = 1
+REQUIRED_COMMANDS = ("mysqldump", "mysql")
+CONNECTION_ARGS = {}
+
+
+def load_config():
+    if not os.path.exists(CONFIG_PATH):
+        return {"version": CONFIG_VERSION, "databases": {}}
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if "databases" not in data:
+        data["databases"] = {}
+    if "version" not in data:
+        data["version"] = CONFIG_VERSION
+    return data
+
+
+def save_config(config):
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+
+def qident(name):
+    return "`" + name.replace("`", "``") + "`"
+
+
+def qstr(value):
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def branch_db_name(database, branch):
+    return f"{database}__{branch}"
+
+
+def run_mysql_sql(sql, database=None):
+    params = CONNECTION_ARGS
+    env = os.environ.copy()
+    if params.get("password"):
+        env["MYSQL_PWD"] = params["password"]
+
+    cmd = ["mysql", *mysql_client_args(params), "--batch", "--skip-column-names"]
+    if database:
+        cmd.append(database)
+    cmd.extend(["-e", sql])
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr = result.stderr.strip() or "mysql コマンド実行に失敗しました。"
+        raise RuntimeError(stderr)
+    return result.stdout
+
+
+def db_exists(database):
+    out = run_mysql_sql(f"SHOW DATABASES LIKE {qstr(database)}")
+    return bool(out.strip())
+
+
+def confirm_or_abort(prompt, auto_yes=False):
+    if auto_yes:
+        return True
+    answer = input(f"{prompt} [y/N]: ").strip().lower()
+    if answer != "y":
+        print("キャンセルしました。")
+        return False
+    return True
+
+
+def ensure_managed(config, database):
+    if database not in config["databases"]:
+        print(f"{database} は管理されていません。先に init を実行してください。")
+        return False
+    return True
+
+
+def mysql_client_args(params):
+    args = []
+    if params.get("host"):
+        args.append(f"--host={params['host']}")
+    if params.get("port"):
+        args.append(f"--port={params['port']}")
+    if params.get("user"):
+        args.append(f"--user={params['user']}")
+    return args
+
+
+def ensure_required_commands():
+    missing = [cmd for cmd in REQUIRED_COMMANDS if shutil.which(cmd) is None]
+    if missing:
+        missing_list = ", ".join(missing)
+        raise RuntimeError(
+            f"必須コマンドが見つかりません: {missing_list}。MySQL クライアントツールをインストールしてください。"
+        )
+
+
+def clone_database(source_db, target_db):
+    params = CONNECTION_ARGS
+    env = os.environ.copy()
+    if params.get("password"):
+        env["MYSQL_PWD"] = params["password"]
+
+    dump_cmd = [
+        "mysqldump",
+        *mysql_client_args(params),
+        "--single-transaction",
+        "--routines",
+        "--events",
+        "--triggers",
+        source_db,
+    ]
+    import_cmd = ["mysql", *mysql_client_args(params), target_db]
+
+    dump_proc = subprocess.Popen(dump_cmd, stdout=subprocess.PIPE, env=env)
+    import_proc = subprocess.Popen(import_cmd, stdin=dump_proc.stdout, env=env)
+    dump_proc.stdout.close()
+
+    import_rc = import_proc.wait()
+    dump_rc = dump_proc.wait()
+    if dump_rc != 0 or import_rc != 0:
+        raise RuntimeError("mysqldump/mysql によるコピーに失敗しました。")
+
+
+def recreate_database(database):
+    run_mysql_sql(f"DROP DATABASE IF EXISTS {qident(database)}")
+    run_mysql_sql(f"CREATE DATABASE {qident(database)}")
+
+
+def init_db(args, config):
+    database = args.database
+    branch = args.branch
+    if database in config["databases"]:
+        print(f"{database} はすでに管理されています。")
+        return
+
+    if not db_exists(database):
+        print(f"データベース {database} が存在しません。")
+        return
+
+    config["databases"][database] = {"current": branch, "branches": [branch]}
+    save_config(config)
+    print(f"{database} を管理下に追加しました。current ブランチ: {branch}")
+
+
+def branch_add(args, config):
+    database = args.database
+    branch = args.branch
+    if not ensure_managed(config, database):
+        return
+    if branch in config["databases"][database]["branches"]:
+        print(f"ブランチ {branch} はすでに存在します。")
+        return
+
+    snapshot_db = branch_db_name(database, branch)
+    if db_exists(snapshot_db):
+        print(f"退避DB {snapshot_db} がすでに存在します。")
+        return
+    recreate_database(snapshot_db)
+    try:
+        clone_database(database, snapshot_db)
+    except Exception:
+        recreate_database(snapshot_db)
+        raise
+
+    config["databases"][database]["branches"].append(branch)
+    save_config(config)
+    print(f"ブランチ {branch} を追加しました。{database} のコピーを {snapshot_db} に作成しました。")
+
+
+def branch_remove(args, config):
+    database = args.database
+    branch = args.branch
+    if not ensure_managed(config, database):
+        return
+    db_info = config["databases"][database]
+    if branch not in db_info["branches"]:
+        print(f"ブランチ {branch} は存在しません。")
+        return
+    if branch == db_info["current"]:
+        print("current ブランチは削除できません。")
+        return
+    if not confirm_or_abort(
+        f"ブランチ {branch} の退避DBを削除します。よろしいですか？", args.yes
+    ):
+        return
+
+    snapshot_db = branch_db_name(database, branch)
+    run_mysql_sql(f"DROP DATABASE IF EXISTS {qident(snapshot_db)}")
+
+    db_info["branches"].remove(branch)
+    save_config(config)
+    print(f"ブランチ {branch} を削除しました。退避DB {snapshot_db} も削除しました。")
+
+
+def switch_branch(args, config):
+    database = args.database
+    target_branch = args.branch
+    if not ensure_managed(config, database):
+        return
+
+    db_info = config["databases"][database]
+    if target_branch not in db_info["branches"]:
+        print(f"ブランチ {target_branch} は存在しません。先に branch-add を実行してください。")
+        return
+
+    current_branch = db_info["current"]
+    if target_branch == current_branch:
+        print(f"{target_branch} はすでに current です。")
+        return
+
+    target_snapshot = branch_db_name(database, target_branch)
+    current_snapshot = branch_db_name(database, current_branch)
+
+    if not db_exists(target_snapshot):
+        print(f"退避DB {target_snapshot} が存在しません。")
+        return
+    if not db_exists(database):
+        print(f"論理DB {database} が存在しません。")
+        return
+
+    recreate_database(current_snapshot)
+    clone_database(database, current_snapshot)
+
+    recreate_database(database)
+    clone_database(target_snapshot, database)
+
+    db_info["current"] = target_branch
+    save_config(config)
+    print(
+        f"{database} の current を {target_branch} に切り替えました。"
+        f"{current_branch} は {current_snapshot} に退避されています。"
+    )
+
+
+def reset_db(args, config):
+    database = args.database
+    if not ensure_managed(config, database):
+        return
+    if not confirm_or_abort(
+        f"{database} の管理情報を削除します（退避DBは残ります）。よろしいですか？", args.yes
+    ):
+        return
+    del config["databases"][database]
+    save_config(config)
+    print(f"{database} の管理情報を削除しました。")
+
+
+def status(args, config):
+    if args.database:
+        database = args.database
+        if database not in config["databases"]:
+            print(f"{database} は管理されていません。")
+            return
+        db_info = config["databases"][database]
+        print(f"{database} (current: {db_info['current']})")
+        print(f"branches: {', '.join(db_info['branches'])}")
+        return
+
+    if not config["databases"]:
+        print("管理対象はありません。")
+        return
+    for database, db_info in config["databases"].items():
+        print(f"{database} (current: {db_info['current']}) - branches: {', '.join(db_info['branches'])}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="mysql-switch CLI: 論理DB名を固定したまま、ブランチ単位でDB状態を切り替えるツール"
+    )
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--user")
+    parser.add_argument("--password")
+    subparsers = parser.add_subparsers(dest="command")
+
+    parser_init = subparsers.add_parser(
+        "init",
+        help="既存の論理DBを管理下に追加する",
+        description="既存の論理DBを管理下に追加し、指定ブランチを current として登録します。",
+    )
+    parser_init.add_argument(
+        "--database",
+        required=True,
+        help="論理DB名（アプリが接続する固定のDB名）",
+    )
+    parser_init.add_argument(
+        "--branch",
+        required=True,
+        help="初期 current として登録するブランチ名",
+    )
+
+    parser_branch_add = subparsers.add_parser(
+        "branch-add",
+        help="ブランチを追加し、current のコピーを退避DBとして作成する",
+        description="新しいブランチを追加し、論理DBの現在状態を 退避DB(論理DB名__branch) として複製します。",
+    )
+    parser_branch_add.add_argument(
+        "--database",
+        required=True,
+        help="対象の論理DB名",
+    )
+    parser_branch_add.add_argument(
+        "--branch",
+        required=True,
+        help="追加するブランチ名",
+    )
+
+    parser_branch_remove = subparsers.add_parser(
+        "branch-remove",
+        help="非 current ブランチを削除し、対応する退避DBも削除する",
+        description="指定ブランチを管理対象から削除します。current ブランチは削除できません。",
+    )
+    parser_branch_remove.add_argument(
+        "--database",
+        required=True,
+        help="対象の論理DB名",
+    )
+    parser_branch_remove.add_argument(
+        "--branch",
+        required=True,
+        help="削除するブランチ名（current 以外）",
+    )
+    parser_branch_remove.add_argument("--yes", action="store_true")
+
+    parser_switch = subparsers.add_parser(
+        "switch",
+        help="current ブランチを切り替える",
+        description="現在の論理DB状態を current 側退避DBへ保存し、対象ブランチの退避DBから論理DBを復元します。",
+    )
+    parser_switch.add_argument(
+        "--database",
+        required=True,
+        help="対象の論理DB名",
+    )
+    parser_switch.add_argument(
+        "--branch",
+        required=True,
+        help="切り替え先ブランチ名",
+    )
+
+    parser_reset = subparsers.add_parser(
+        "reset",
+        help="管理情報を削除する（退避DBは残す）",
+        description="指定した論理DBの管理情報を設定ファイルから削除します。退避DBは削除しません。",
+    )
+    parser_reset.add_argument(
+        "--database",
+        required=True,
+        help="対象の論理DB名",
+    )
+    parser_reset.add_argument("--yes", action="store_true")
+
+    parser_status = subparsers.add_parser(
+        "status",
+        help="管理状態を表示する",
+        description="current ブランチと管理ブランチ一覧を表示します。database 省略時は全件表示します。",
+    )
+    parser_status.add_argument(
+        "--database",
+        help="対象の論理DB名（未指定時は全件表示）",
+    )
+
+    args = parser.parse_args()
+    global CONNECTION_ARGS
+    CONNECTION_ARGS = {
+        "host": args.host,
+        "port": args.port,
+        "user": args.user,
+        "password": args.password,
+    }
+    if args.command in {"init", "branch-add", "branch-remove", "switch"}:
+        ensure_required_commands()
+    config = load_config()
+
+    try:
+        if args.command == "init":
+            init_db(args, config)
+        elif args.command == "branch-add":
+            branch_add(args, config)
+        elif args.command == "branch-remove":
+            branch_remove(args, config)
+        elif args.command == "switch":
+            switch_branch(args, config)
+        elif args.command == "reset":
+            reset_db(args, config)
+        elif args.command == "status":
+            status(args, config)
+        else:
+            parser.print_help()
+    except Exception as e:
+        print(f"エラー: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

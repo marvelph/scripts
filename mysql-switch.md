@@ -1,0 +1,111 @@
+# mysql-switch 仕様書
+
+`mysql-switch` は、ローカル MySQL のデータベース状態をブランチ単位で切り替えるための CLI です。  
+主な目的は、`master` と `develop` のようにスキーマ進化が異なる作業を、テーブル再作成なしで往復できるようにすることです。
+
+## 想定ユースケース
+- 開発途中で `develop` 側にスキーマ変更を入れた。
+- その最中に `master` 側でバグ修正が必要になった。
+- ブランチを行き来するたびにマイグレーションや初期データ投入をやり直したくない。
+
+このとき、ブランチごとの「スキーマ + データ」を保持して即時に切り替える運用を行います。
+
+## 用語
+- 論理DB名: アプリが通常接続する DB 名。例: `app_db`
+- current ブランチ: 現在 `論理DB名` に割り当てられているブランチ
+- 退避DB: 非 current ブランチの実体。命名規則は `論理DB名__<branch>`
+
+## 基本方針
+- 論理DB名は固定で運用する。
+- ブランチ切替時も、アプリ設定上の DB 名は変えない。
+- ブランチごとの差分は退避DB側に保持する。
+
+## 前提
+- macOS / Linux で Python 3 が利用可能
+- ローカル MySQL サーバが動作している
+- `mysqldump` と `mysql` コマンドが利用可能
+- `mysql-switch` を実行可能にしている
+  - `chmod +x mysql-switch`
+
+## 接続情報
+- 既定では接続情報を引数で渡さない。
+- そのため、`mysql` / `mysqldump` の通常解決（例: `~/.my.cnf`）を利用できる。
+- 接続先を明示したい場合のみ、次の任意引数を使う。
+  - `--host`
+  - `--port`
+  - `--user`
+  - `--password`
+
+## 設定ファイル
+- パス: `~/.mysql-switch.json`
+- 役割: 論理DB名ごとの current ブランチと管理ブランチ一覧を保持
+- 手書き編集は不要。`init` / `branch-add` / `switch` / `branch-remove` / `reset` の実行時に自動で作成・更新される
+
+```json
+{
+  "databases": {
+    "app_db": {
+      "current": "master",
+      "branches": ["master", "develop"]
+    }
+  }
+}
+```
+
+## コマンド仕様
+### `init --database <database> --branch <branch>`
+- 既存の論理DB名を管理下に追加する。
+- 途中導入を想定したコマンド。
+- 例: `mysql-switch init --database app_db --branch master`
+
+### `branch-add --database <database> --branch <branch>`
+- ブランチを追加する。
+- 追加時の起点は「空DB」ではなく current 状態のコピーを基本とする。
+- 追加後は `論理DB名__<branch>` の退避DBとして保持する。
+- 例: `mysql-switch branch-add --database app_db --branch develop`
+
+### `switch --database <database> --branch <branch>`
+- current ブランチを切り替える。
+- 切替イメージ:
+  - 現在の `論理DB名` を `論理DB名__<current>` として退避
+  - `論理DB名__<target>` を `論理DB名` に昇格
+  - 設定ファイルの current を更新
+- 例: `mysql-switch switch --database app_db --branch develop`
+
+### `branch-remove --database <database> --branch <branch>`
+- 指定ブランチを管理対象から削除する。
+- current ブランチは削除不可。
+- 実行前に確認プロンプトを表示する。
+- 例: `mysql-switch branch-remove --database app_db --branch develop`
+
+### `reset --database <database>`
+- 指定DBの管理情報を削除する。
+- 原則として退避DBは残す（必要に応じて別途削除）。
+- 実行前に確認プロンプトを表示する。
+- 例: `mysql-switch reset --database app_db`
+
+### `status [--database <database>]`
+- 管理状態を表示する。
+- 引数なしの場合は管理対象を一覧表示する。
+- 例:
+  - `mysql-switch status --database app_db`
+  - `mysql-switch status`
+
+## 運用イメージ
+### 初期状態 (`master`)
+- `app_db` が `master` の状態を保持
+- current = `master`
+
+### `develop` 追加
+- `mysql-switch branch-add --database app_db --branch develop`
+- `app_db__develop` は `app_db` のコピーから作成
+- これで両ブランチの作業開始点を揃えられる
+
+### `develop` へ切替
+- `mysql-switch switch --database app_db --branch develop`
+- `app_db` は `develop` の状態になる
+- `master` 側の状態は `app_db__master` として保持される
+
+## 設計上の意図
+- 開発の最初から厳密分離するためのツールではなく、途中導入して運用を分岐させるためのツール。
+- `master` / `develop` を往復しても、毎回の再構築を避けて作業効率を維持する。
