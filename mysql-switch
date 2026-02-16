@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,8 @@ CONFIG_PATH = os.path.expanduser("~/.mysql-switch.json")
 CONFIG_VERSION = 1
 REQUIRED_COMMANDS = ("mysqldump", "mysql")
 CONNECTION_ARGS = {}
+DB_NAME_MAX_LEN = 64
+BRANCH_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def load_config():
@@ -39,6 +42,20 @@ def qstr(value):
 
 def branch_db_name(database, branch):
     return f"{database}__{branch}"
+
+
+def validate_branch_name(database, branch):
+    if not branch:
+        raise ValueError("ブランチ名は必須です。")
+    if not BRANCH_NAME_PATTERN.fullmatch(branch):
+        raise ValueError(
+            "ブランチ名に使用できる文字は英数字、ハイフン(-)、アンダースコア(_)のみです。"
+        )
+    snapshot = branch_db_name(database, branch)
+    if len(snapshot) > DB_NAME_MAX_LEN:
+        raise ValueError(
+            f"退避DB名が長すぎます: {snapshot} (最大 {DB_NAME_MAX_LEN} 文字)"
+        )
 
 
 def run_mysql_sql(sql, database=None):
@@ -135,6 +152,7 @@ def recreate_database(database):
 def init_db(args, config):
     database = args.database
     branch = args.branch
+    validate_branch_name(database, branch)
     if database in config["databases"]:
         print(f"{database} はすでに管理されています。")
         return
@@ -151,6 +169,7 @@ def init_db(args, config):
 def branch_add(args, config):
     database = args.database
     branch = args.branch
+    validate_branch_name(database, branch)
     if not ensure_managed(config, database):
         return
     if branch in config["databases"][database]["branches"]:
@@ -176,6 +195,7 @@ def branch_add(args, config):
 def branch_remove(args, config):
     database = args.database
     branch = args.branch
+    validate_branch_name(database, branch)
     if not ensure_managed(config, database):
         return
     db_info = config["databases"][database]
@@ -201,6 +221,7 @@ def branch_remove(args, config):
 def switch_branch(args, config):
     database = args.database
     target_branch = args.branch
+    validate_branch_name(database, target_branch)
     if not ensure_managed(config, database):
         return
 
