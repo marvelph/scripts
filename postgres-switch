@@ -324,7 +324,16 @@ def init_db(args, config):
     try:
         clone_database(database, snapshot_db)
     except Exception:
-        drop_database(snapshot_db)
+        cleanup_error = None
+        try:
+            drop_database(snapshot_db)
+        except Exception as e:
+            cleanup_error = e
+        if cleanup_error is not None:
+            print(
+                f"WARN: 退避DB {snapshot_db} のクリーンアップに失敗しました: {cleanup_error}",
+                file=sys.stderr,
+            )
         raise
 
     config["databases"][database] = {"current": branch, "branches": [branch]}
@@ -357,7 +366,16 @@ def branch_add(args, config):
     try:
         clone_database(database, snapshot_db)
     except Exception:
-        drop_database(snapshot_db)
+        cleanup_error = None
+        try:
+            drop_database(snapshot_db)
+        except Exception as e:
+            cleanup_error = e
+        if cleanup_error is not None:
+            print(
+                f"WARN: 退避DB {snapshot_db} のクリーンアップに失敗しました: {cleanup_error}",
+                file=sys.stderr,
+            )
         raise
 
     config["databases"][database]["branches"].append(branch)

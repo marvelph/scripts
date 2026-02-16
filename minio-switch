@@ -204,7 +204,16 @@ def init_bucket(args, config):
     try:
         clone_bucket(alias_name, bucket, alias_name, snapshot)
     except Exception:
-        drop_bucket(alias_name, snapshot)
+        cleanup_error = None
+        try:
+            drop_bucket(alias_name, snapshot)
+        except Exception as e:
+            cleanup_error = e
+        if cleanup_error is not None:
+            print(
+                f"WARN: 退避バケット {mc_path(alias_name, snapshot)} のクリーンアップに失敗しました: {cleanup_error}",
+                file=sys.stderr,
+            )
         raise
 
     config["buckets"][key] = {
@@ -244,7 +253,16 @@ def branch_add(args, config):
     try:
         clone_bucket(alias_name, bucket, alias_name, snapshot)
     except Exception:
-        drop_bucket(alias_name, snapshot)
+        cleanup_error = None
+        try:
+            drop_bucket(alias_name, snapshot)
+        except Exception as e:
+            cleanup_error = e
+        if cleanup_error is not None:
+            print(
+                f"WARN: 退避バケット {mc_path(alias_name, snapshot)} のクリーンアップに失敗しました: {cleanup_error}",
+                file=sys.stderr,
+            )
         raise
 
     bucket_info["branches"].append(branch)
