@@ -64,6 +64,8 @@
 ### `init --database <database> --branch <branch>`
 - 既存の論理DB名を管理下に追加する。
 - 途中導入を想定したコマンド。
+- `論理DB名__<branch>` の初期退避DBを作成し、論理DBの内容をコピーする。
+- 初期退避DBが既に存在する場合は中止する。
 - 例: `mysql-switch init --database app_db --branch master`
 
 ### `branch-add --database <database> --branch <branch>`
@@ -78,6 +80,7 @@
   - 現在の `論理DB名` を `論理DB名__<current>` として退避
   - `論理DB名__<target>` を `論理DB名` に昇格
   - 設定ファイルの current を更新
+- `論理DB名__<current>` と `論理DB名__<target>` が存在しない場合は中止する。
 - 例: `mysql-switch switch --database app_db --branch develop`
 
 ### `branch-remove --database <database> --branch <branch>`

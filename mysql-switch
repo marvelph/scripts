@@ -186,9 +186,25 @@ def init_db(args, config):
         print(f"データベース {database} が存在しません。")
         return
 
+    snapshot_db = branch_db_name(database, branch)
+    if db_exists(snapshot_db):
+        print(f"退避DB {snapshot_db} がすでに存在します。init を中止します。")
+        return
+
+    source_defaults = get_db_defaults(database)
+    recreate_database(snapshot_db, source_defaults)
+    try:
+        clone_database(database, snapshot_db)
+    except Exception:
+        run_mysql_sql(f"DROP DATABASE IF EXISTS {qident(snapshot_db)}")
+        raise
+
     config["databases"][database] = {"current": branch, "branches": [branch]}
     save_config(config)
-    print(f"{database} を管理下に追加しました。current ブランチ: {branch}")
+    print(
+        f"{database} を管理下に追加しました。current ブランチ: {branch}。"
+        f"初期退避DB {snapshot_db} を作成しました。"
+    )
 
 
 def branch_add(args, config):
@@ -266,6 +282,9 @@ def switch_branch(args, config):
 
     if not db_exists(target_snapshot):
         print(f"退避DB {target_snapshot} が存在しません。")
+        return
+    if not db_exists(current_snapshot):
+        print(f"退避DB {current_snapshot} が存在しません。switch を中止します。")
         return
     if not db_exists(database):
         print(f"論理DB {database} が存在しません。")
