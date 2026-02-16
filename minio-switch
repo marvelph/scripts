@@ -1,0 +1,378 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+CONFIG_PATH = os.path.expanduser("~/.minio-switch.json")
+CONFIG_VERSION = 1
+REQUIRED_COMMANDS = ("mc",)
+BRANCH_PATTERN = re.compile(r"^[a-z0-9-]+$")
+
+
+def load_config():
+    if not os.path.exists(CONFIG_PATH):
+        return {"version": CONFIG_VERSION, "buckets": {}}
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if "buckets" not in data:
+        data["buckets"] = {}
+    if "version" not in data:
+        data["version"] = CONFIG_VERSION
+    return data
+
+
+def save_config(config):
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+
+def ensure_required_commands():
+    missing = [cmd for cmd in REQUIRED_COMMANDS if shutil.which(cmd) is None]
+    if missing:
+        missing_list = ", ".join(missing)
+        raise RuntimeError(
+            f"必須コマンドが見つかりません: {missing_list}。MinIO Client(mc) をインストールしてください。"
+        )
+
+
+def run_mc(args):
+    result = subprocess.run(["mc", *args], capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr = result.stderr.strip() or "mc コマンド実行に失敗しました。"
+        raise RuntimeError(stderr)
+    return result.stdout
+
+
+def mc_path(alias_name, bucket):
+    return f"{alias_name}/{bucket}"
+
+
+def config_key(alias_name, bucket):
+    return f"{alias_name}/{bucket}"
+
+
+def bucket_exists(alias_name, bucket):
+    result = subprocess.run(
+        ["mc", "ls", mc_path(alias_name, bucket)], capture_output=True, text=True
+    )
+    return result.returncode == 0
+
+
+def ensure_bucket(alias_name, bucket):
+    if not bucket_exists(alias_name, bucket):
+        run_mc(["mb", mc_path(alias_name, bucket)])
+
+
+def clone_bucket(source_alias, source_bucket, target_alias, target_bucket):
+    source = mc_path(source_alias, source_bucket)
+    target = mc_path(target_alias, target_bucket)
+    run_mc(["mirror", "--overwrite", "--remove", source, target])
+
+
+def validate_branch_or_abort(branch):
+    if not BRANCH_PATTERN.fullmatch(branch):
+        print("branch 名は小文字英数字とハイフンのみ使用できます（正規表現: ^[a-z0-9-]+$）。")
+        return False
+    return True
+
+
+def snapshot_bucket_name(bucket, branch):
+    snapshot = f"{bucket}--{branch}"
+    if len(snapshot) > 63:
+        raise RuntimeError(
+            f"退避バケット名が長すぎます: {snapshot}。bucket と branch を短くしてください。"
+        )
+    return snapshot
+
+
+def confirm_or_abort(prompt, auto_yes=False):
+    if auto_yes:
+        return True
+    answer = input(f"{prompt} [y/N]: ").strip().lower()
+    if answer != "y":
+        print("キャンセルしました。")
+        return False
+    return True
+
+
+def ensure_managed(config, alias_name, bucket):
+    key = config_key(alias_name, bucket)
+    if key not in config["buckets"]:
+        print(f"{key} は管理されていません。先に init を実行してください。")
+        return None
+    return key
+
+
+def init_bucket(args, config):
+    alias_name = args.alias
+    bucket = args.bucket
+    branch = args.branch
+
+    if not validate_branch_or_abort(branch):
+        return
+
+    key = config_key(alias_name, bucket)
+    if key in config["buckets"]:
+        print(f"{key} はすでに管理されています。")
+        return
+
+    if not bucket_exists(alias_name, bucket):
+        print(f"バケット {mc_path(alias_name, bucket)} が存在しません。")
+        return
+
+    config["buckets"][key] = {
+        "current": branch,
+        "branches": [branch],
+    }
+    save_config(config)
+    print(f"{key} を管理下に追加しました。current ブランチ: {branch}")
+
+
+def branch_add(args, config):
+    alias_name = args.alias
+    bucket = args.bucket
+    branch = args.branch
+
+    if not validate_branch_or_abort(branch):
+        return
+
+    key = ensure_managed(config, alias_name, bucket)
+    if not key:
+        return
+
+    bucket_info = config["buckets"][key]
+    if branch in bucket_info["branches"]:
+        print(f"ブランチ {branch} はすでに存在します。")
+        return
+
+    snapshot = snapshot_bucket_name(bucket, branch)
+    if bucket_exists(alias_name, snapshot):
+        print(f"退避バケット {mc_path(alias_name, snapshot)} がすでに存在します。")
+        return
+
+    ensure_bucket(alias_name, snapshot)
+    clone_bucket(alias_name, bucket, alias_name, snapshot)
+
+    bucket_info["branches"].append(branch)
+    save_config(config)
+    print(
+        f"ブランチ {branch} を追加しました。"
+        f"{mc_path(alias_name, bucket)} のコピーを {mc_path(alias_name, snapshot)} に作成しました。"
+    )
+
+
+def branch_remove(args, config):
+    alias_name = args.alias
+    bucket = args.bucket
+    branch = args.branch
+
+    if not validate_branch_or_abort(branch):
+        return
+
+    key = ensure_managed(config, alias_name, bucket)
+    if not key:
+        return
+
+    bucket_info = config["buckets"][key]
+    if branch not in bucket_info["branches"]:
+        print(f"ブランチ {branch} は存在しません。")
+        return
+    if branch == bucket_info["current"]:
+        print("current ブランチは削除できません。")
+        return
+
+    snapshot = snapshot_bucket_name(bucket, branch)
+    if not confirm_or_abort(
+        f"ブランチ {branch} の退避バケットを削除します。よろしいですか？", args.yes
+    ):
+        return
+
+    if bucket_exists(alias_name, snapshot):
+        run_mc(["rb", "--force", mc_path(alias_name, snapshot)])
+
+    bucket_info["branches"].remove(branch)
+    save_config(config)
+    print(f"ブランチ {branch} を削除しました。退避バケット {snapshot} も削除しました。")
+
+
+def switch_branch(args, config):
+    alias_name = args.alias
+    bucket = args.bucket
+    target_branch = args.branch
+
+    if not validate_branch_or_abort(target_branch):
+        return
+
+    key = ensure_managed(config, alias_name, bucket)
+    if not key:
+        return
+
+    bucket_info = config["buckets"][key]
+    if target_branch not in bucket_info["branches"]:
+        print(f"ブランチ {target_branch} は存在しません。先に branch-add を実行してください。")
+        return
+
+    current_branch = bucket_info["current"]
+    if target_branch == current_branch:
+        print(f"{target_branch} はすでに current です。")
+        return
+
+    current_snapshot = snapshot_bucket_name(bucket, current_branch)
+    target_snapshot = snapshot_bucket_name(bucket, target_branch)
+
+    if not bucket_exists(alias_name, target_snapshot):
+        print(f"退避バケット {mc_path(alias_name, target_snapshot)} が存在しません。")
+        return
+    if not bucket_exists(alias_name, bucket):
+        print(f"論理バケット {mc_path(alias_name, bucket)} が存在しません。")
+        return
+
+    ensure_bucket(alias_name, current_snapshot)
+    clone_bucket(alias_name, bucket, alias_name, current_snapshot)
+
+    clone_bucket(alias_name, target_snapshot, alias_name, bucket)
+
+    bucket_info["current"] = target_branch
+    save_config(config)
+    print(
+        f"{mc_path(alias_name, bucket)} の current を {target_branch} に切り替えました。"
+        f"{current_branch} は {mc_path(alias_name, current_snapshot)} に退避されています。"
+    )
+
+
+def reset_bucket(args, config):
+    alias_name = args.alias
+    bucket = args.bucket
+
+    key = ensure_managed(config, alias_name, bucket)
+    if not key:
+        return
+
+    if not confirm_or_abort(
+        f"{key} の管理情報を削除します（退避バケットは残ります）。よろしいですか？", args.yes
+    ):
+        return
+
+    del config["buckets"][key]
+    save_config(config)
+    print(f"{key} の管理情報を削除しました。")
+
+
+def status(args, config):
+    alias_name = args.alias
+    bucket = args.bucket
+    key = config_key(alias_name, bucket)
+
+    if key not in config["buckets"]:
+        print(f"{key} は管理されていません。")
+        return
+
+    bucket_info = config["buckets"][key]
+    print(f"{key} (current: {bucket_info['current']})")
+    print(f"branches: {', '.join(bucket_info['branches'])}")
+
+
+def list_buckets(config):
+    keys = sorted(config["buckets"].keys())
+    if not keys:
+        print("管理対象はありません。")
+        return
+    for key in keys:
+        print(key)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="minio-switch CLI: 論理バケット名を固定したまま、ブランチ単位で状態を切り替えるツール"
+    )
+    parser.add_argument(
+        "--alias",
+        default="local",
+        help="mc に設定済みの MinIO alias 名（既定: local）",
+    )
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    parser_init = subparsers.add_parser("init", help="既存の論理バケットを管理下に追加する")
+    parser_init.add_argument("--bucket", required=True, help="論理バケット名")
+    parser_init.add_argument(
+        "--branch",
+        required=True,
+        help="初期 current ブランチ名（許可: 小文字英数字とハイフン）",
+    )
+
+    parser_branch_add = subparsers.add_parser(
+        "branch-add",
+        help="ブランチを追加し、current のコピーを退避バケットとして作成する",
+    )
+    parser_branch_add.add_argument("--bucket", required=True, help="対象の論理バケット名")
+    parser_branch_add.add_argument(
+        "--branch",
+        required=True,
+        help="追加するブランチ名（許可: 小文字英数字とハイフン）",
+    )
+
+    parser_branch_remove = subparsers.add_parser(
+        "branch-remove",
+        help="非 current ブランチを削除し、対応する退避バケットも削除する",
+    )
+    parser_branch_remove.add_argument("--bucket", required=True, help="対象の論理バケット名")
+    parser_branch_remove.add_argument(
+        "--branch",
+        required=True,
+        help="削除するブランチ名（許可: 小文字英数字とハイフン）",
+    )
+    parser_branch_remove.add_argument("--yes", action="store_true")
+
+    parser_switch = subparsers.add_parser("switch", help="current ブランチを切り替える")
+    parser_switch.add_argument("--bucket", required=True, help="対象の論理バケット名")
+    parser_switch.add_argument(
+        "--branch",
+        required=True,
+        help="切替先ブランチ名（許可: 小文字英数字とハイフン）",
+    )
+
+    parser_reset = subparsers.add_parser("reset", help="管理情報を削除する（退避バケットは残す）")
+    parser_reset.add_argument("--bucket", required=True, help="対象の論理バケット名")
+    parser_reset.add_argument("--yes", action="store_true")
+
+    parser_status = subparsers.add_parser("status", help="指定バケットの管理状態を表示する")
+    parser_status.add_argument("--bucket", required=True, help="対象の論理バケット名")
+
+    subparsers.add_parser("list", help="管理対象の論理バケット名を一覧表示する")
+
+    args = parser.parse_args()
+
+    if args.command in {"init", "branch-add", "branch-remove", "switch"}:
+        ensure_required_commands()
+
+    config = load_config()
+
+    try:
+        if args.command == "init":
+            init_bucket(args, config)
+        elif args.command == "branch-add":
+            branch_add(args, config)
+        elif args.command == "branch-remove":
+            branch_remove(args, config)
+        elif args.command == "switch":
+            switch_branch(args, config)
+        elif args.command == "reset":
+            reset_bucket(args, config)
+        elif args.command == "status":
+            status(args, config)
+        elif args.command == "list":
+            list_buckets(config)
+        else:
+            parser.print_help()
+    except Exception as e:
+        print(f"エラー: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
