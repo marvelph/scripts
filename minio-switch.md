@@ -108,6 +108,19 @@
   4. target 退避 -> 論理バケットへミラー
 - 途中失敗時は、論理バケットが空/不完全になる可能性があるため、`status` と `mc ls` で状態確認して再実行する。
 
+## 復旧手順（最小）
+1. 管理状態を確認する。  
+   `minio-switch --alias <alias> status --bucket <bucket>`
+2. 論理バケットと退避バケットの存在を確認する。  
+   `mc ls <alias>/<bucket>`  
+   `mc ls <alias>/<bucket>--<branch>`
+3. 失敗要因（接続不良・権限・容量など）を解消する。
+4. 同じ `switch` を再実行する。  
+   `minio-switch --alias <alias> switch --bucket <bucket> --branch <target>`
+5. 再実行で復旧できない場合は、管理情報を外して再初期化する。  
+   `minio-switch --alias <alias> reset --bucket <bucket> --yes`  
+   `minio-switch --alias <alias> init --bucket <bucket> --branch <branch>`
+
 ## 運用イメージ
 1. `main` で初期化  
    `minio-switch --alias local init --bucket app-assets --branch main`

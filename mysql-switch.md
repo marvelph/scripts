@@ -132,3 +132,15 @@
 - 後段（切替先退避DBから論理DBへのコピー）で失敗した場合:
   - 論理DBが空/不完全になる可能性がある。
   - 仕組みを理解した上での復旧が難しければ、管理情報を削除してデータベースを再作成する。
+
+## 復旧手順（最小）
+1. 管理状態を確認する。  
+   `mysql-switch status --database <database>`
+2. 論理DBと退避DBの存在を確認する。  
+   `mysql -N -e "SHOW DATABASES LIKE '<database>%';"`
+3. 失敗要因（容量不足・接続不良など）を解消する。
+4. 同じ `switch` を再実行する。  
+   `mysql-switch switch --database <database> --branch <target>`
+5. 再実行で復旧できない場合は、管理情報を外して再初期化する。  
+   `mysql-switch reset --database <database> --yes`  
+   `mysql-switch init --database <database> --branch <branch>`
