@@ -84,12 +84,13 @@
 - 実行前に確認プロンプトを表示する。
 - 例: `mysql-switch reset --database app_db`
 
-### `status [--database <database>]`
-- 管理状態を表示する。
-- 引数なしの場合は管理対象を一覧表示する。
-- 例:
-  - `mysql-switch status --database app_db`
-  - `mysql-switch status`
+### `status --database <database>`
+- 指定した論理DBの管理状態（current / branches）を表示する。
+- 例: `mysql-switch status --database app_db`
+
+### `list`
+- 管理対象の論理DB名のみを一覧表示する。
+- 例: `mysql-switch list`
 
 ## 運用イメージ
 ### 初期状態 (`master`)
@@ -118,4 +119,3 @@
 - 後段（切替先退避DBから論理DBへのコピー）で失敗した場合:
   - 論理DBが空/不完全になる可能性がある。
   - 仕組みを理解した上での復旧が難しければ、管理情報を削除してデータベースを再作成する。
-
