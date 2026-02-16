@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 CONFIG_PATH = os.path.expanduser("~/.mysql-switch.json")
 CONFIG_VERSION = 1
@@ -30,8 +31,16 @@ def load_config():
 
 
 def save_config(config):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+    config_dir = os.path.dirname(CONFIG_PATH) or "."
+    os.makedirs(config_dir, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=config_dir, delete=False
+    ) as tf:
+        json.dump(config, tf, indent=2, ensure_ascii=False)
+        tf.flush()
+        os.fsync(tf.fileno())
+        temp_path = tf.name
+    os.replace(temp_path, CONFIG_PATH)
 
 
 def qident(name):
@@ -174,6 +183,10 @@ def recreate_database(database, defaults=None):
     run_mysql_sql(create_sql)
 
 
+def drop_database(database):
+    run_mysql_sql(f"DROP DATABASE IF EXISTS {qident(database)}")
+
+
 def init_db(args, config):
     database = args.database
     branch = args.branch
@@ -226,7 +239,7 @@ def branch_add(args, config):
     try:
         clone_database(database, snapshot_db)
     except Exception:
-        recreate_database(snapshot_db, source_defaults)
+        drop_database(snapshot_db)
         raise
 
     config["databases"][database]["branches"].append(branch)

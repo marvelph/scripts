@@ -48,6 +48,7 @@
 - パス: `~/.mysql-switch.json`
 - 役割: 論理DB名ごとの current ブランチと管理ブランチ一覧を保持
 - 手書き編集は不要。`init` / `branch-add` / `switch` / `branch-remove` / `reset` の実行時に自動で作成・更新される
+- 保存は一時ファイル経由の置換で行い、部分書き込みによる破損を避ける
 
 ```json
 {
@@ -72,6 +73,7 @@
 - ブランチを追加する。
 - 追加時の起点は「空DB」ではなく current 状態のコピーを基本とする。
 - 追加後は `論理DB名__<branch>` の退避DBとして保持する。
+- コピーに失敗した場合は、作成途中の退避DBを削除して中断する。
 - 例: `mysql-switch branch-add --database app_db --branch develop`
 
 ### `switch --database <database> --branch <branch>`

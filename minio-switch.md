@@ -42,6 +42,7 @@
 - パス: `~/.minio-switch.json`
 - 役割: `alias/bucket` ごとの current / branches を保持
 - 手編集は不要。各コマンド実行時に自動更新される
+- 保存は一時ファイル経由の置換で行い、部分書き込みによる破損を避ける
 
 ```json
 {
@@ -60,11 +61,13 @@
 - 既存の論理バケットを管理下に追加する。
 - 退避バケット `<bucket>--<branch>` を作成し、現在の論理バケット内容をコピーする。
 - 退避バケットが既に存在する場合は安全のため中止する。
+- コピーに失敗した場合は、作成途中の退避バケットを削除して中断する。
 - 例: `minio-switch --alias local init --bucket app-assets --branch main`
 
 ### `branch-add --bucket <bucket> --branch <branch>`
 - ブランチを追加する。
 - 追加時は current 状態を退避バケットにコピーする。
+- コピーに失敗した場合は、作成途中の退避バケットを削除して中断する。
 - 例: `minio-switch --alias local branch-add --bucket app-assets --branch develop`
 
 ### `switch --bucket <bucket> --branch <branch>`

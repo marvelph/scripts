@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 CONFIG_PATH = os.path.expanduser("~/.minio-switch.json")
 CONFIG_VERSION = 1
@@ -26,8 +27,16 @@ def load_config():
 
 
 def save_config(config):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+    config_dir = os.path.dirname(CONFIG_PATH) or "."
+    os.makedirs(config_dir, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=config_dir, delete=False
+    ) as tf:
+        json.dump(config, tf, indent=2, ensure_ascii=False)
+        tf.flush()
+        os.fsync(tf.fileno())
+        temp_path = tf.name
+    os.replace(temp_path, CONFIG_PATH)
 
 
 def ensure_required_commands():
@@ -105,6 +114,10 @@ def clone_bucket(source_alias, source_bucket, target_alias, target_bucket):
     run_mc(["mirror", "--overwrite", "--remove", source, target])
 
 
+def drop_bucket(alias_name, bucket):
+    run_mc(["rb", "--force", mc_path(alias_name, bucket)])
+
+
 def validate_branch_or_abort(branch):
     if not BRANCH_PATTERN.fullmatch(branch):
         print("branch 名は小文字英数字とハイフンのみ使用できます（正規表現: ^[a-z0-9-]+$）。")
@@ -162,7 +175,11 @@ def init_bucket(args, config):
         return
 
     ensure_bucket(alias_name, snapshot)
-    clone_bucket(alias_name, bucket, alias_name, snapshot)
+    try:
+        clone_bucket(alias_name, bucket, alias_name, snapshot)
+    except Exception:
+        drop_bucket(alias_name, snapshot)
+        raise
 
     config["buckets"][key] = {
         "current": branch,
@@ -198,7 +215,11 @@ def branch_add(args, config):
         return
 
     ensure_bucket(alias_name, snapshot)
-    clone_bucket(alias_name, bucket, alias_name, snapshot)
+    try:
+        clone_bucket(alias_name, bucket, alias_name, snapshot)
+    except Exception:
+        drop_bucket(alias_name, snapshot)
+        raise
 
     bucket_info["branches"].append(branch)
     save_config(config)
