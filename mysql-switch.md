@@ -20,7 +20,7 @@
 - 退避DB名（`論理DB名__<branch>`）が MySQL のDB名上限（64文字）を超える場合はエラー。
 
 ## データベース再作成時の属性
-- `switch` と `branch-add` の再作成では、元DBの `DEFAULT CHARACTER SET` と `DEFAULT COLLATE` を引き継ぐ。
+- `init` / `switch` / `branch-add` の再作成では、元DBの `DEFAULT CHARACTER SET` と `DEFAULT COLLATE` を引き継ぐ。
 - これにより、再作成時にサーバ既定値へ意図せず戻ることを防ぐ。
 
 ## 基本方針
