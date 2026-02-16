@@ -377,6 +377,66 @@ def list_databases(config):
         print(database)
 
 
+def verify_database(args, config):
+    database = args.database
+    issues = []
+    warnings = []
+
+    if database not in config["databases"]:
+        issues.append(f"{database} は管理されていません。")
+    else:
+        db_info = config["databases"][database]
+        current = db_info.get("current")
+        branches = db_info.get("branches", [])
+
+        if not isinstance(branches, list) or not branches:
+            issues.append("branches が空または不正です。")
+        else:
+            if current not in branches:
+                issues.append("current が branches に含まれていません。")
+            for branch in branches:
+                try:
+                    validate_branch_name(database, branch)
+                except Exception as e:
+                    issues.append(f"ブランチ名が不正です: {branch} ({e})")
+
+    try:
+        if not db_exists(database):
+            issues.append(f"論理DB {database} が存在しません。")
+    except Exception as e:
+        issues.append(f"論理DB確認に失敗しました: {e}")
+
+    if database in config["databases"]:
+        db_info = config["databases"][database]
+        for branch in db_info.get("branches", []):
+            snapshot = branch_db_name(database, branch)
+            try:
+                if not db_exists(snapshot):
+                    issues.append(f"退避DB {snapshot} が存在しません。")
+                else:
+                    get_db_defaults(snapshot)
+            except Exception as e:
+                issues.append(f"退避DB {snapshot} の確認に失敗しました: {e}")
+
+        try:
+            get_db_defaults(database)
+        except Exception as e:
+            warnings.append(f"論理DBのデフォルト設定取得に失敗しました: {e}")
+
+    if issues:
+        for item in issues:
+            print(f"ERROR: {item}")
+    if warnings:
+        for item in warnings:
+            print(f"WARN: {item}")
+    if not issues and not warnings:
+        print(f"OK: {database} は整合しています。")
+    elif not issues:
+        print(f"OK: {database} は利用可能です（警告あり）。")
+
+    return len(issues) == 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="mysql-switch CLI: 論理DB名を固定したまま、ブランチ単位でDB状態を切り替えるツール"
@@ -474,6 +534,16 @@ def main():
         required=True,
         help="対象の論理DB名",
     )
+    parser_verify = subparsers.add_parser(
+        "verify",
+        help="指定DBの整合性を検証する",
+        description="設定情報と実DBの存在・整合性を読み取り専用で検証します。",
+    )
+    parser_verify.add_argument(
+        "--database",
+        required=True,
+        help="対象の論理DB名",
+    )
     subparsers.add_parser(
         "list",
         help="管理対象の論理DB名を一覧表示する",
@@ -488,7 +558,7 @@ def main():
         "user": args.user,
         "password": args.password,
     }
-    if args.command in {"init", "branch-add", "branch-remove", "switch"}:
+    if args.command in {"init", "branch-add", "branch-remove", "switch", "verify"}:
         ensure_required_commands()
     config = load_config()
 
@@ -508,6 +578,10 @@ def main():
                     reset_db(args, config)
         elif args.command == "status":
             status(args, config)
+        elif args.command == "verify":
+            ok = verify_database(args, config)
+            if not ok:
+                sys.exit(1)
         elif args.command == "list":
             list_databases(config)
         else:

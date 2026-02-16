@@ -380,6 +380,62 @@ def list_buckets(config):
         print(key)
 
 
+def verify_bucket(args, config):
+    alias_name = args.alias
+    bucket = args.bucket
+    key = config_key(alias_name, bucket)
+    issues = []
+    warnings = []
+
+    if key not in config["buckets"]:
+        issues.append(f"{key} は管理されていません。")
+    else:
+        info = config["buckets"][key]
+        current = info.get("current")
+        branches = info.get("branches", [])
+
+        if not isinstance(branches, list) or not branches:
+            issues.append("branches が空または不正です。")
+        else:
+            if current not in branches:
+                issues.append("current が branches に含まれていません。")
+            for branch in branches:
+                if not BRANCH_PATTERN.fullmatch(branch):
+                    issues.append(f"ブランチ名が不正です: {branch}")
+                try:
+                    snapshot_bucket_name(bucket, branch)
+                except Exception as e:
+                    issues.append(f"退避バケット名が不正です: {branch} ({e})")
+
+    try:
+        if not bucket_exists(alias_name, bucket):
+            issues.append(f"論理バケット {mc_path(alias_name, bucket)} が存在しません。")
+    except Exception as e:
+        issues.append(f"論理バケット確認に失敗しました: {e}")
+
+    if key in config["buckets"]:
+        for branch in config["buckets"][key].get("branches", []):
+            snapshot = snapshot_bucket_name(bucket, branch)
+            try:
+                if not bucket_exists(alias_name, snapshot):
+                    issues.append(f"退避バケット {mc_path(alias_name, snapshot)} が存在しません。")
+            except Exception as e:
+                issues.append(f"退避バケット {mc_path(alias_name, snapshot)} の確認に失敗しました: {e}")
+
+    if issues:
+        for item in issues:
+            print(f"ERROR: {item}")
+    if warnings:
+        for item in warnings:
+            print(f"WARN: {item}")
+    if not issues and not warnings:
+        print(f"OK: {key} は整合しています。")
+    elif not issues:
+        print(f"OK: {key} は利用可能です（警告あり）。")
+
+    return len(issues) == 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="minio-switch CLI: 論理バケット名を固定したまま、ブランチ単位で状態を切り替えるツール"
@@ -438,11 +494,17 @@ def main():
     parser_status = subparsers.add_parser("status", help="指定バケットの管理状態を表示する")
     parser_status.add_argument("--bucket", required=True, help="対象の論理バケット名")
 
+    parser_verify = subparsers.add_parser(
+        "verify",
+        help="指定バケットの整合性を検証する",
+    )
+    parser_verify.add_argument("--bucket", required=True, help="対象の論理バケット名")
+
     subparsers.add_parser("list", help="管理対象の論理バケット名を一覧表示する")
 
     args = parser.parse_args()
 
-    if args.command in {"init", "branch-add", "branch-remove", "switch"}:
+    if args.command in {"init", "branch-add", "branch-remove", "switch", "verify"}:
         ensure_required_commands()
 
     config = load_config()
@@ -463,6 +525,10 @@ def main():
                     reset_bucket(args, config)
         elif args.command == "status":
             status(args, config)
+        elif args.command == "verify":
+            ok = verify_bucket(args, config)
+            if not ok:
+                sys.exit(1)
         elif args.command == "list":
             list_buckets(config)
         else:

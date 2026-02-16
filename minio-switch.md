@@ -98,6 +98,15 @@
 - 管理対象キー（`alias/bucket`）を一覧表示する。
 - 例: `minio-switch --alias local list`
 
+### `verify --bucket <bucket>`
+- 指定した `alias/bucket` の整合性を読み取り専用で検証する。
+- 主な確認項目:
+  - 設定ファイルの current / branches 整合
+  - 論理バケットと退避バケットの存在
+  - 退避バケット名の妥当性
+- 問題がある場合は `ERROR` を表示して非ゼロ終了する。
+- 例: `minio-switch --alias local verify --bucket app-assets`
+
 ## 実装上の注意
 - オブジェクトコピーは `mc mirror --overwrite --remove` を使用。
 - `switch` / `branch-add` ではバケットを再作成しない（既存バケット設定を維持する）。
@@ -109,8 +118,9 @@
 - 途中失敗時は、論理バケットが空/不完全になる可能性があるため、`status` と `mc ls` で状態確認して再実行する。
 
 ## 復旧手順（最小）
-1. 管理状態を確認する。  
-   `minio-switch --alias <alias> status --bucket <bucket>`
+1. 管理状態と整合性を確認する。  
+   `minio-switch --alias <alias> status --bucket <bucket>`  
+   `minio-switch --alias <alias> verify --bucket <bucket>`
 2. 論理バケットと退避バケットの存在を確認する。  
    `mc ls <alias>/<bucket>`  
    `mc ls <alias>/<bucket>--<branch>`

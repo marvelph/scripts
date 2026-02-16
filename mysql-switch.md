@@ -105,6 +105,15 @@
 - 管理対象の論理DB名のみを一覧表示する。
 - 例: `mysql-switch list`
 
+### `verify --database <database>`
+- 指定した論理DBの整合性を読み取り専用で検証する。
+- 主な確認項目:
+  - 設定ファイルの current / branches 整合
+  - 論理DBと退避DBの存在
+  - 退避DB名の妥当性
+- 問題がある場合は `ERROR` を表示して非ゼロ終了する。
+- 例: `mysql-switch verify --database app_db`
+
 ## 運用イメージ
 ### 初期状態 (`master`)
 - `app_db` が `master` の状態を保持
@@ -134,8 +143,9 @@
   - 仕組みを理解した上での復旧が難しければ、管理情報を削除してデータベースを再作成する。
 
 ## 復旧手順（最小）
-1. 管理状態を確認する。  
-   `mysql-switch status --database <database>`
+1. 管理状態と整合性を確認する。  
+   `mysql-switch status --database <database>`  
+   `mysql-switch verify --database <database>`
 2. 論理DBと退避DBの存在を確認する。  
    `mysql -N -e "SHOW DATABASES LIKE '<database>%';"`
 3. 失敗要因（容量不足・接続不良など）を解消する。
