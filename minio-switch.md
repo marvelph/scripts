@@ -131,6 +131,16 @@
    `minio-switch --alias <alias> reset --bucket <bucket> --yes`  
    `minio-switch --alias <alias> init --bucket <bucket> --branch <branch>`
 
+## verify 結果と対処
+- `ERROR: <alias>/<bucket> は管理されていません。`
+  - 対処: `init` で管理下に追加する。
+- `ERROR: 論理バケット <alias>/<bucket> が存在しません。`
+  - 対処: 論理バケットを作成/復元してから `verify` を再実行する。
+- `ERROR: 退避バケット <alias>/<bucket>--<branch> が存在しません。`
+  - 対処: 退避バケットを手動復元するか、復旧困難なら `reset -> init -> branch-add` で再構成する。
+- `ERROR: current が branches に含まれていません。` / `ERROR: branches が空または不正です。`
+  - 対処: 設定ファイル整合が崩れているため、`reset` して再初期化する。
+
 ## 運用イメージ
 1. `main` で初期化  
    `minio-switch --alias local init --bucket app-assets --branch main`

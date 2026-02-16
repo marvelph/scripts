@@ -124,3 +124,13 @@
 5. 再実行で復旧できない場合は管理情報を外して再初期化する。  
    `postgres-switch reset --database <database> --yes`  
    `postgres-switch init --database <database> --branch <branch>`
+
+## verify 結果と対処
+- `ERROR: <database> は管理されていません。`
+  - 対処: `init` で管理下に追加する。
+- `ERROR: 論理DB <database> が存在しません。`
+  - 対処: 論理DBを作成/復元してから `verify` を再実行する。
+- `ERROR: 退避DB <database>__<branch> が存在しません。`
+  - 対処: 退避DBを手動復元するか、復旧困難なら `reset -> init -> branch-add` で再構成する。
+- `ERROR: current が branches に含まれていません。` / `ERROR: branches が空または不正です。`
+  - 対処: 設定ファイル整合が崩れているため、`reset` して再初期化する。
