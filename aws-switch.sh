@@ -1,12 +1,44 @@
 # aws-switch.sh - AWS CLI profile switcher (shell function)
 #
-# Usage (zsh/bash):
+# Usage:
 #   source /Users/marvelph/Developer/Projects/scripts/aws-switch.sh
 #   aws-switch
 
+_aws_switch_choose_one() {
+    local prompt="$1"
+    shift
+    local -a items=("$@")
+    local choice
+
+    if (( ${#items[@]} == 0 )); then
+        return 1
+    fi
+
+    if command -v fzf >/dev/null 2>&1; then
+        choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)"
+        case $? in
+            0) ;;
+            1|130) return 2 ;;
+            *) echo "Error: failed to select an item with fzf." >&2; return 1 ;;
+        esac
+        [[ -n "${choice:-}" ]] || return 2
+        printf '%s\n' "$choice"
+        return 0
+    fi
+
+    echo "Info: 'fzf' not found. Falling back to numbered selection." >&2
+    select choice in "${items[@]}"; do
+        [[ -n "${choice:-}" ]] || { echo "Invalid selection." >&2; continue; }
+        printf '%s\n' "$choice"
+        return 0
+    done
+
+    return 2
+}
+
 aws-switch() {
     local -a profiles
-    local p profile
+    local p profile rc
 
     if ! command -v aws >/dev/null 2>&1; then
         echo "Error: 'aws' command is required." >&2
@@ -22,19 +54,19 @@ aws-switch() {
         return 1
     fi
 
-    if command -v fzf >/dev/null 2>&1; then
-        profile="$(printf '%s\n' "${profiles[@]}" | fzf --prompt="Select AWS Profile> " --height=40% --reverse)"
+    if profile="$(_aws_switch_choose_one "Select AWS Profile> " "${profiles[@]}")"; then
+        :
     else
-        echo "fzf not found; falling back to numbered selection." >&2
-        select profile in "${profiles[@]}"; do
-            [[ -n "${profile:-}" ]] && break
-            echo "Invalid selection." >&2
-        done
-    fi
-
-    if [[ -z "${profile:-}" ]]; then
-        echo "No profile selected. AWS_PROFILE unchanged." >&2
-        return 1
+        rc=$?
+        case "$rc" in
+            2)
+                echo "No profile selected. AWS_PROFILE unchanged." >&2
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
     fi
 
     export AWS_PROFILE="$profile"

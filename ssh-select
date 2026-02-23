@@ -1,104 +1,141 @@
-#!/usr/bin/env python3
-import configparser
-import os
-import subprocess
-import sys
-from pathlib import Path
-import argparse
+#!/usr/bin/env bash
+# ssh-select - Select an SSH host alias and run ssh/sftp
+#
+# Usage:
+#   ssh-select [-m ssh|sftp]
 
-CONFIG_FILE = Path.home() / ".ssh-select"
+set -euo pipefail
 
-if not CONFIG_FILE.exists():
-    print(f"{CONFIG_FILE} not found")
-    sys.exit(1)
+CONFIG_FILE="${HOME}/.ssh/config"
+MODE="ssh"
 
-# -----------------------------
-# 引数解析（モードのみ）
-# -----------------------------
-parser = argparse.ArgumentParser(description="Select server and run ssh/sftp")
-parser.add_argument(
-    "-m", "--mode", choices=["ssh", "sftp"], default="ssh",
-    help="Mode to run (ssh or sftp)"
-)
-args = parser.parse_args()
-mode = args.mode
+die() {
+    echo "Error: $*" >&2
+    exit 1
+}
 
-# -----------------------------
-# ini ファイル読み込み
-# -----------------------------
-config = configparser.ConfigParser(interpolation=None)
-config.optionxform = str
-try:
-    config.read(CONFIG_FILE)
-except configparser.Error as e:
-    print(f"Failed to parse {CONFIG_FILE}: {e}", file=sys.stderr)
-    sys.exit(1)
+choose_one() {
+    local prompt="$1"
+    shift
+    local -a items=("$@")
+    local choice rc
 
-sections = config.sections()
-if not sections:
-    print(f"No servers found in {CONFIG_FILE}")
-    sys.exit(0)
+    if (( ${#items[@]} == 0 )); then
+        return 1
+    fi
 
-# -----------------------------
-# サーバ選択（fzf）
-# -----------------------------
-try:
-    fzf = subprocess.run(
-        ["fzf", "--prompt=ssh-select> "],
-        input="\n".join(sections),
-        text=True,
-        capture_output=True
-    )
-except FileNotFoundError:
-    print("fzf is not installed or not found in PATH", file=sys.stderr)
-    sys.exit(1)
+    if command -v fzf >/dev/null 2>&1; then
+        set +e
+        choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)"
+        rc=$?
+        set -e
+        case "$rc" in
+            0) ;;
+            1|130) return 2 ;;
+            *) die "failed to select an item with fzf." ;;
+        esac
+        [[ -n "$choice" ]] || return 2
+        printf '%s\n' "$choice"
+        return 0
+    fi
 
-if fzf.returncode == 0:
-    selected = fzf.stdout.strip()
-    if not selected:
-        sys.exit(0)
-elif fzf.returncode in (1, 130):
-    # 1: no match / no selection, 130: interrupted (Ctrl-C)
-    sys.exit(0)
-else:
-    err = fzf.stderr.strip() or f"fzf exited with code {fzf.returncode}"
-    print(f"Failed to select server: {err}", file=sys.stderr)
-    sys.exit(1)
+    echo "Info: 'fzf' not found. Falling back to numbered selection." >&2
+    select choice in "${items[@]}"; do
+        [[ -n "${choice:-}" ]] || { echo "Invalid selection." >&2; continue; }
+        printf '%s\n' "$choice"
+        return 0
+    done
 
-section = config[selected]
+    return 2
+}
 
-aws_profile = section.get("aws_profile", "")
-host = section.get("host")
-user = section.get("user")
-identity_file = section.get("identity_file", "")
+usage() {
+    cat <<'EOF'
+Usage: ssh-select [-m ssh|sftp]
+       ssh-select [--mode ssh|sftp]
+EOF
+}
 
-if not host or not user:
-    print(f"{selected} missing host or user")
-    sys.exit(1)
+while (($# > 0)); do
+    case "$1" in
+        -m|--mode)
+            if (($# < 2)); then
+                echo "Error: mode requires an argument (ssh or sftp)" >&2
+                usage >&2
+                exit 1
+            fi
+            MODE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Error: unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
 
-# -----------------------------
-# 実行環境変数
-# -----------------------------
-env = os.environ.copy()
-if aws_profile:
-    env["AWS_PROFILE"] = aws_profile
+if [[ "$MODE" != "ssh" && "$MODE" != "sftp" ]]; then
+    die "invalid mode: $MODE (expected: ssh or sftp)"
+fi
 
-# -----------------------------
-# コマンド構築
-# -----------------------------
-if mode == "ssh":
-    cmd = ["ssh"]
-    if identity_file:
-        cmd.extend(["-i", identity_file])
-    cmd.append(f"{user}@{host}")
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    die "$CONFIG_FILE not found"
+fi
 
-elif mode == "sftp":
-    cmd = ["sftp"]
-    if identity_file:
-        cmd.extend(["-i", identity_file])
-    cmd.append(f"{user}@{host}")
+HOSTS="$(
+    awk '
+        {
+            sub(/[[:space:]]+#.*/, "", $0)
+        }
+        /^[[:space:]]*[Hh][Oo][Ss][Tt][[:space:]]+/ {
+            for (i = 2; i <= NF; i++) {
+                host = $i
+                if (host ~ /^[*!]/) {
+                    continue
+                }
+                if (host ~ /[*?]/) {
+                    continue
+                }
+                if (!(host in seen)) {
+                    seen[host] = 1
+                    print host
+                }
+            }
+        }
+    ' "$CONFIG_FILE"
+)"
 
-# -----------------------------
-# コマンド実行
-# -----------------------------
-os.execvpe(cmd[0], cmd, env)
+if [[ -z "$HOSTS" ]]; then
+    echo "No concrete host entries found in $CONFIG_FILE." >&2
+    exit 0
+fi
+
+HOST_LIST=()
+while IFS= read -r host; do
+    [[ -n "$host" ]] && HOST_LIST+=("$host")
+done < <(printf '%s\n' "$HOSTS")
+if selected="$(choose_one "Select SSH Host> " "${HOST_LIST[@]}")"; then
+    :
+else
+    rc=$?
+    case "$rc" in
+        2)
+            echo "No host selected. Connection skipped." >&2
+            exit 0
+            ;;
+        *)
+            die "failed to choose host."
+            ;;
+    esac
+fi
+
+if [[ "$MODE" == "ssh" ]]; then
+    exec ssh "$selected"
+fi
+
+exec sftp "$selected"

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# aws-login - Select an AWS SSO profile and run aws sso login
+# aws-login - Select an AWS profile and run aws sso login
+#
+# Usage:
+#   aws-login
 
 set -euo pipefail
 
@@ -10,6 +13,42 @@ die() {
 
 need_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "'$1' command is required."
+}
+
+choose_one() {
+    local prompt="$1"
+    shift
+    local -a items=("$@")
+    local choice
+
+    if (( ${#items[@]} == 0 )); then
+        return 1
+    fi
+
+    if command -v fzf >/dev/null 2>&1; then
+        local rc
+        set +e
+        choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)"
+        rc=$?
+        set -e
+        case "$rc" in
+            0) ;;
+            1|130) return 2 ;;
+            *) die "failed to select an item with fzf." ;;
+        esac
+        [[ -n "$choice" ]] || return 2
+        printf '%s\n' "$choice"
+        return 0
+    fi
+
+    echo "Info: 'fzf' not found. Falling back to numbered selection." >&2
+    select choice in "${items[@]}"; do
+        [[ -n "${choice:-}" ]] || { echo "Invalid selection." >&2; continue; }
+        printf '%s\n' "$choice"
+        return 0
+    done
+
+    return 2
 }
 
 need_cmd aws
@@ -85,22 +124,20 @@ if (( ${#sso_profiles[@]} == 0 )); then
     sso_profiles=("${profiles[@]}")
 fi
 
-choose_profile() {
-    if command -v fzf >/dev/null 2>&1; then
-        printf '%s\n' "${sso_profiles[@]}" | fzf --prompt="Select AWS SSO Profile> " --height=40% --reverse
-        return
-    fi
-
-    echo "fzf not found; falling back to numbered selection." >&2
-    select choice in "${sso_profiles[@]}"; do
-        [[ -n "${choice:-}" ]] || { echo "Invalid selection." >&2; continue; }
-        echo "$choice"
-        return
-    done
-}
-
-profile="$(choose_profile)"
-[[ -n "$profile" ]] || die "No profile selected."
+if profile="$(choose_one "Select AWS Profile> " "${sso_profiles[@]}")"; then
+    :
+else
+    rc=$?
+    case "$rc" in
+        2)
+            echo "No profile selected. Login skipped." >&2
+            exit 0
+            ;;
+        *)
+            die "failed to choose profile."
+            ;;
+    esac
+fi
 
 echo "Logging in to SSO for profile: $profile"
 AWS_PROFILE="$profile" aws sso login
