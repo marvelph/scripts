@@ -37,17 +37,11 @@ choose_one() {
         return 0
     fi
 
-    echo "Info: 'fzf' not found. Falling back to numbered selection." >&2
-    select choice in "${items[@]}"; do
-        [[ -n "${choice:-}" ]] || { echo "Invalid selection." >&2; continue; }
-        printf '%s\n' "$choice"
-        return 0
-    done
-
-    return 2
+    return 1
 }
 
 need_cmd aws
+need_cmd fzf
 
 profiles=()
 while IFS= read -r p; do
@@ -55,72 +49,7 @@ while IFS= read -r p; do
 done < <(aws configure list-profiles)
 (( ${#profiles[@]} > 0 )) || die "No AWS profiles found."
 
-config_file="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
-
-get_sso_profiles_from_config() {
-    local file="$1"
-    [[ -r "$file" ]] || return 0
-
-    awk '
-    function emit_section() {
-        if (profile != "" && (has_sso_start_url || has_sso_session || (has_account && has_role))) {
-            print profile
-        }
-    }
-    function reset_flags() {
-        has_sso_start_url = 0
-        has_sso_session = 0
-        has_account = 0
-        has_role = 0
-    }
-    /^\[.*\]$/ {
-        emit_section()
-        profile = ""
-        reset_flags()
-
-        if ($0 ~ /^\[profile[[:space:]]+/) {
-            profile = $0
-            sub(/^\[profile[[:space:]]+/, "", profile)
-            sub(/\]$/, "", profile)
-        } else if ($0 ~ /^\[default\]$/) {
-            profile = "default"
-        }
-        next
-    }
-    {
-        if (profile == "") {
-            next
-        }
-        if ($0 ~ /^[[:space:]]*sso_start_url[[:space:]]*=/) {
-            has_sso_start_url = 1
-        } else if ($0 ~ /^[[:space:]]*sso_session[[:space:]]*=/) {
-            has_sso_session = 1
-        } else if ($0 ~ /^[[:space:]]*sso_account_id[[:space:]]*=/) {
-            has_account = 1
-        } else if ($0 ~ /^[[:space:]]*sso_role_name[[:space:]]*=/) {
-            has_role = 1
-        }
-    }
-    END {
-        emit_section()
-    }
-    ' "$file"
-}
-
-sso_profile_list="$(get_sso_profiles_from_config "$config_file")"
-sso_profiles=()
-
-for p in "${profiles[@]}"; do
-    if [[ -n "$sso_profile_list" ]] && printf '%s\n' "$sso_profile_list" | grep -Fxq -- "$p"; then
-        sso_profiles+=("$p")
-    fi
-done
-
-if (( ${#sso_profiles[@]} == 0 )); then
-    sso_profiles=("${profiles[@]}")
-fi
-
-if profile="$(choose_one "Select AWS Profile> " "${sso_profiles[@]}")"; then
+if profile="$(choose_one "Select AWS Profile> " "${profiles[@]}")"; then
     :
 else
     rc=$?

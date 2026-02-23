@@ -51,14 +51,7 @@ choose_one() {
         return 0
     fi
 
-    echo "Info: 'fzf' not found. Falling back to numbered selection." >&2
-    select choice in "${items[@]}"; do
-        [[ -n "${choice:-}" ]] || { echo "Invalid selection." >&2; continue; }
-        printf '%s\n' "$choice"
-        return 0
-    done
-
-    return 2
+    return 1
 }
 
 normalize_identity_path() {
@@ -82,6 +75,7 @@ normalize_identity_path() {
 }
 
 need_cmd ssh-add
+need_cmd fzf
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
     die "$CONFIG_FILE not found"

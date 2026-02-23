@@ -26,14 +26,7 @@ _aws_switch_choose_one() {
         return 0
     fi
 
-    echo "Info: 'fzf' not found. Falling back to numbered selection." >&2
-    select choice in "${items[@]}"; do
-        [[ -n "${choice:-}" ]] || { echo "Invalid selection." >&2; continue; }
-        printf '%s\n' "$choice"
-        return 0
-    done
-
-    return 2
+    return 1
 }
 
 aws-switch() {
@@ -42,6 +35,10 @@ aws-switch() {
 
     if ! command -v aws >/dev/null 2>&1; then
         echo "Error: 'aws' command is required." >&2
+        return 1
+    fi
+    if ! command -v fzf >/dev/null 2>&1; then
+        echo "Error: 'fzf' command is required." >&2
         return 1
     fi
 
