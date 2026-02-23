@@ -8,15 +8,15 @@ _aws_switch_choose_one() {
     local prompt="$1"
     shift
     local -a items=("$@")
-    local choice
+    local choice rc=0
 
     if (( ${#items[@]} == 0 )); then
         return 1
     fi
 
     if command -v fzf >/dev/null 2>&1; then
-        choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)"
-        case $? in
+        choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)" || rc=$?
+        case "$rc" in
             0) ;;
             1|130) return 2 ;;
             *) echo "Error: failed to select an item with fzf." >&2; return 1 ;;

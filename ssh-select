@@ -18,17 +18,14 @@ choose_one() {
     local prompt="$1"
     shift
     local -a items=("$@")
-    local choice rc
+    local choice rc=0
 
     if (( ${#items[@]} == 0 )); then
         return 1
     fi
 
     if command -v fzf >/dev/null 2>&1; then
-        set +e
-        choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)"
-        rc=$?
-        set -e
+        choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)" || rc=$?
         case "$rc" in
             0) ;;
             1|130) return 2 ;;
