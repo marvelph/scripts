@@ -1,3 +1,5 @@
+#!/usr/bin/env zsh
+
 # aws-switch.sh - AWS CLI profile switcher (shell function)
 #
 # Usage:
@@ -5,6 +7,7 @@
 #   aws-switch
 
 _aws_switch_choose_one() {
+    emulate -L zsh
     local prompt="$1"
     shift
     local -a items=("$@")
@@ -30,6 +33,7 @@ _aws_switch_choose_one() {
 }
 
 aws-switch() {
+    emulate -L zsh
     local -a profiles
     local p profile rc
 

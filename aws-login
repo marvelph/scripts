@@ -1,10 +1,10 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 # aws-login - Select an AWS profile and run aws sso login
 #
 # Usage:
 #   aws-login
 
-set -euo pipefail
+setopt ERR_EXIT NO_UNSET PIPE_FAIL
 
 die() {
     echo "Error: $*" >&2

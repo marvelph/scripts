@@ -1,10 +1,10 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 # ssh-add-select - Select an IdentityFile from ~/.ssh/config and run ssh-add
 #
 # Usage:
 #   ssh-add-select
 
-set -euo pipefail
+setopt ERR_EXIT NO_UNSET PIPE_FAIL
 
 CONFIG_FILE="${HOME}/.ssh/config"
 
