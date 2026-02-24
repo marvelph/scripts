@@ -4,134 +4,140 @@
 # Usage:
 #   ssh-select [-m ssh|sftp]
 
+emulate -L zsh
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
 
-CONFIG_FILE="${HOME}/.ssh/config"
-MODE="ssh"
+typeset -r CONFIG_FILE="${HOME}/.ssh/config"
 
-die() {
-    echo "Error: $*" >&2
-    exit 1
+_die() {
+  print -u2 -- "Error: $*"
+  exit 1
 }
 
-need_cmd() {
-    command -v "$1" >/dev/null 2>&1 || die "'$1' command is required."
+_need_cmd() {
+  command -v -- "$1" >/dev/null 2>&1 || _die "'$1' command is required."
 }
 
-choose_one() {
-    local prompt="$1"
-    shift
-    local -a items=("$@")
-    local choice rc=0
+_choose_one() {
+  emulate -L zsh
+  setopt NO_UNSET PIPE_FAIL
 
-    if (( ${#items[@]} == 0 )); then
-        return 1
-    fi
+  typeset prompt="$1"
+  shift
+  typeset -a items=("$@")
+  typeset choice
+  integer rc
 
-    if command -v fzf >/dev/null 2>&1; then
-        choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)" || rc=$?
-        case "$rc" in
-            0) ;;
-            1|130) return 2 ;;
-            *) die "failed to select an item with fzf." ;;
-        esac
-        [[ -n "$choice" ]] || return 2
-        printf '%s\n' "$choice"
-        return 0
-    fi
+  (( $#items > 0 )) || return 1
 
-    return 1
-}
-
-usage() {
-    cat <<'EOF'
-Usage: ssh-select [-m ssh|sftp]
-       ssh-select [--mode ssh|sftp]
-EOF
-}
-
-while (($# > 0)); do
-    case "$1" in
-        -m|--mode)
-            if (($# < 2)); then
-                echo "Error: mode requires an argument (ssh or sftp)" >&2
-                usage >&2
-                exit 1
-            fi
-            MODE="$2"
-            shift 2
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            echo "Error: unknown argument: $1" >&2
-            usage >&2
-            exit 1
-            ;;
-    esac
-done
-
-if [[ "$MODE" != "ssh" && "$MODE" != "sftp" ]]; then
-    die "invalid mode: $MODE (expected: ssh or sftp)"
-fi
-
-need_cmd fzf
-
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    die "$CONFIG_FILE not found"
-fi
-
-HOSTS="$(
-    awk '
-        {
-            sub(/[[:space:]]+#.*/, "", $0)
-        }
-        /^[[:space:]]*[Hh][Oo][Ss][Tt][[:space:]]+/ {
-            for (i = 2; i <= NF; i++) {
-                host = $i
-                if (host ~ /^[*!]/) {
-                    continue
-                }
-                if (host ~ /[*?]/) {
-                    continue
-                }
-                if (!(host in seen)) {
-                    seen[host] = 1
-                    print host
-                }
-            }
-        }
-    ' "$CONFIG_FILE"
-)"
-
-if [[ -z "$HOSTS" ]]; then
-    echo "No concrete host entries found in $CONFIG_FILE." >&2
-    exit 0
-fi
-
-HOST_LIST=()
-while IFS= read -r host; do
-    [[ -n "$host" ]] && HOST_LIST+=("$host")
-done < <(printf '%s\n' "$HOSTS")
-if selected="$(choose_one "Select SSH Host> " "${HOST_LIST[@]}")"; then
-    :
-else
+  if ! choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)"; then
     rc=$?
     case "$rc" in
-        2)
-            echo "No host selected. Connection skipped." >&2
-            exit 0
-            ;;
-        *)
-            die "failed to choose host."
-            ;;
+      1|130) return 2 ;;
+      *) _die "failed to select an item with fzf." ;;
     esac
-fi
+  fi
 
-if [[ "$MODE" == "ssh" ]]; then
+  [[ -n "$choice" ]] || return 2
+  print -r -- "$choice"
+}
+
+_usage() {
+  cat <<'USAGE'
+Usage: ssh-select [-m ssh|sftp]
+       ssh-select [--mode ssh|sftp]
+USAGE
+}
+
+main() {
+  emulate -L zsh
+  setopt ERR_EXIT NO_UNSET PIPE_FAIL
+
+  typeset mode="ssh"
+  typeset host selected hosts_output
+  integer rc
+  typeset -a host_list
+  typeset -a mode_opt help_opt
+
+  zparseopts -D -E -K m:=mode_opt -mode:=mode_opt h=help_opt -help=help_opt || {
+    _usage >&2
+    return 1
+  }
+
+  if (( $#help_opt > 0 )); then
+    _usage
+    return 0
+  fi
+
+  if (( $#mode_opt > 0 )); then
+    mode="${mode_opt[-1]}"
+  fi
+
+  if (( $# > 0 )); then
+    print -u2 -- "Error: unknown argument: $1"
+    _usage >&2
+    return 1
+  fi
+
+  if [[ "$mode" != "ssh" && "$mode" != "sftp" ]]; then
+    _die "invalid mode: $mode (expected: ssh or sftp)"
+  fi
+
+  _need_cmd fzf
+
+  [[ -f "$CONFIG_FILE" ]] || _die "$CONFIG_FILE not found"
+
+  hosts_output="$({
+    awk '
+      {
+        sub(/[[:space:]]+#.*/, "", $0)
+      }
+      /^[[:space:]]*[Hh][Oo][Ss][Tt][[:space:]]+/ {
+        for (i = 2; i <= NF; i++) {
+          host = $i
+          if (host ~ /^[*!]/) {
+            continue
+          }
+          if (host ~ /[*?]/) {
+            continue
+          }
+          if (!(host in seen)) {
+            seen[host] = 1
+            print host
+          }
+        }
+      }
+    ' "$CONFIG_FILE"
+  })"
+
+  host_list=("${(@f)hosts_output}")
+  host_list=("${(@)host_list:#}")
+
+  if (( $#host_list == 0 )); then
+    print -u2 -- "No concrete host entries found in $CONFIG_FILE."
+    return 0
+  fi
+
+  if selected="$(_choose_one "Select SSH Host> " "${host_list[@]}")"; then
+    :
+  else
+    rc=$?
+    case "$rc" in
+      2)
+        print -u2 -- "No host selected. Connection skipped."
+        return 0
+        ;;
+      *)
+        _die "failed to choose host."
+        ;;
+    esac
+  fi
+
+  if [[ "$mode" == "ssh" ]]; then
     exec ssh "$selected"
-fi
+  fi
 
-exec sftp "$selected"
+  exec sftp "$selected"
+}
+
+main "$@"

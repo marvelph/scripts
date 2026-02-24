@@ -4,65 +4,74 @@
 # Usage:
 #   aws-login
 
+emulate -L zsh
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
 
-die() {
-    echo "Error: $*" >&2
-    exit 1
+_die() {
+  print -u2 -- "Error: $*"
+  exit 1
 }
 
-need_cmd() {
-    command -v "$1" >/dev/null 2>&1 || die "'$1' command is required."
+_need_cmd() {
+  command -v -- "$1" >/dev/null 2>&1 || _die "'$1' command is required."
 }
 
-choose_one() {
-    local prompt="$1"
-    shift
-    local -a items=("$@")
-    local choice rc=0
+_choose_one() {
+  emulate -L zsh
+  setopt NO_UNSET PIPE_FAIL
 
-    if (( ${#items[@]} == 0 )); then
-        return 1
-    fi
+  typeset prompt="$1"
+  shift
+  typeset -a items=("$@")
+  typeset choice
+  integer rc
 
-    if command -v fzf >/dev/null 2>&1; then
-        choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)" || rc=$?
-        case "$rc" in
-            0) ;;
-            1|130) return 2 ;;
-            *) die "failed to select an item with fzf." ;;
-        esac
-        [[ -n "$choice" ]] || return 2
-        printf '%s\n' "$choice"
-        return 0
-    fi
+  (( $#items > 0 )) || return 1
 
-    return 1
-}
-
-need_cmd aws
-need_cmd fzf
-
-profiles=()
-while IFS= read -r p; do
-    [[ -n "$p" ]] && profiles+=("$p")
-done < <(aws configure list-profiles)
-(( ${#profiles[@]} > 0 )) || die "No AWS profiles found."
-
-if profile="$(choose_one "Select AWS Profile> " "${profiles[@]}")"; then
-    :
-else
+  if ! choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)"; then
     rc=$?
     case "$rc" in
-        2)
-            echo "No profile selected. Login skipped." >&2
-            exit 0
-            ;;
-        *)
-            die "failed to choose profile."
-            ;;
+      1|130) return 2 ;;
+      *) _die "failed to select an item with fzf." ;;
     esac
-fi
+  fi
 
-echo "Logging in to SSO for profile: $profile"
-AWS_PROFILE="$profile" aws sso login
+  [[ -n "$choice" ]] || return 2
+  print -r -- "$choice"
+}
+
+main() {
+  emulate -L zsh
+  setopt ERR_EXIT NO_UNSET PIPE_FAIL
+
+  typeset profile
+  integer rc
+  typeset -a profiles
+
+  _need_cmd aws
+  _need_cmd fzf
+
+  profiles=("${(@f)$(aws configure list-profiles)}")
+  profiles=("${(@)profiles:#}")
+  (( $#profiles > 0 )) || _die "No AWS profiles found."
+
+  if profile="$(_choose_one "Select AWS Profile> " "${profiles[@]}")"; then
+    :
+  else
+    rc=$?
+    case "$rc" in
+      2)
+        print -u2 -- "No profile selected. Login skipped."
+        return 0
+        ;;
+      *)
+        _die "failed to choose profile."
+        ;;
+    esac
+  fi
+
+  print -- "Logging in to SSO for profile: $profile"
+  AWS_PROFILE="$profile" aws sso login
+}
+
+main "$@"

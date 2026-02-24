@@ -7,69 +7,77 @@
 #   aws-switch
 
 _aws_switch_choose_one() {
-    emulate -L zsh
-    local prompt="$1"
-    shift
-    local -a items=("$@")
-    local choice rc=0
+  emulate -L zsh
+  setopt NO_UNSET PIPE_FAIL
 
-    if (( ${#items[@]} == 0 )); then
+  typeset prompt="$1"
+  shift
+  typeset -a items=("$@")
+  typeset choice
+  integer rc
+
+  (( $#items > 0 )) || return 1
+
+  if ! choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)"; then
+    rc=$?
+    case "$rc" in
+      1|130) return 2 ;;
+      *)
+        print -u2 -- "Error: failed to select an item with fzf."
         return 1
-    fi
+        ;;
+    esac
+  fi
 
-    if command -v fzf >/dev/null 2>&1; then
-        choice="$(printf '%s\n' "${items[@]}" | fzf --prompt="$prompt" --height=40% --reverse)" || rc=$?
-        case "$rc" in
-            0) ;;
-            1|130) return 2 ;;
-            *) echo "Error: failed to select an item with fzf." >&2; return 1 ;;
-        esac
-        [[ -n "${choice:-}" ]] || return 2
-        printf '%s\n' "$choice"
-        return 0
-    fi
-
-    return 1
+  [[ -n "$choice" ]] || return 2
+  print -r -- "$choice"
 }
 
 aws-switch() {
-    emulate -L zsh
-    local -a profiles
-    local p profile rc
+  emulate -L zsh
+  setopt NO_UNSET PIPE_FAIL
 
-    if ! command -v aws >/dev/null 2>&1; then
-        echo "Error: 'aws' command is required." >&2
+  typeset output profile
+  integer rc
+  typeset -a profiles
+
+  if ! command -v -- aws >/dev/null 2>&1; then
+    print -u2 -- "Error: 'aws' command is required."
+    return 1
+  fi
+  if ! command -v -- fzf >/dev/null 2>&1; then
+    print -u2 -- "Error: 'fzf' command is required."
+    return 1
+  fi
+
+  if ! output="$(aws configure list-profiles)"; then
+    print -u2 -- "Error: failed to list AWS profiles."
+    return 1
+  fi
+
+  profiles=("${(@f)output}")
+  profiles=("${(@)profiles:#}")
+
+  if (( $#profiles == 0 )); then
+    print -u2 -- "No AWS profiles found."
+    return 1
+  fi
+
+  if profile="$(_aws_switch_choose_one "Select AWS Profile> " "${profiles[@]}")"; then
+    :
+  else
+    rc=$?
+    case "$rc" in
+      2)
+        print -u2 -- "No profile selected. AWS_PROFILE unchanged."
+        return 0
+        ;;
+      *)
         return 1
-    fi
-    if ! command -v fzf >/dev/null 2>&1; then
-        echo "Error: 'fzf' command is required." >&2
-        return 1
-    fi
+        ;;
+    esac
+  fi
 
-    while IFS= read -r p; do
-        [[ -n "$p" ]] && profiles+=("$p")
-    done < <(aws configure list-profiles)
-
-    if (( ${#profiles[@]} == 0 )); then
-        echo "No AWS profiles found." >&2
-        return 1
-    fi
-
-    if profile="$(_aws_switch_choose_one "Select AWS Profile> " "${profiles[@]}")"; then
-        :
-    else
-        rc=$?
-        case "$rc" in
-            2)
-                echo "No profile selected. AWS_PROFILE unchanged." >&2
-                return 0
-                ;;
-            *)
-                return 1
-                ;;
-        esac
-    fi
-
-    export AWS_PROFILE="$profile"
-    echo "Switched AWS_PROFILE to: $AWS_PROFILE"
+  export AWS_PROFILE="$profile"
+  print -- "Switched AWS_PROFILE to: $AWS_PROFILE"
 }
