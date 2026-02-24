@@ -1,5 +1,3 @@
-#!/usr/bin/env zsh
-
 # aws-switch.sh - AWS CLI profile switcher (shell function)
 #
 # Usage:

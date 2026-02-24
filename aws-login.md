@@ -1,24 +1,25 @@
 # aws-login
 
-`aws-login` は、AWS プロファイルを選択して `aws sso login` を実行するコマンドです。
+`aws-login` は、AWS プロファイルを選択して `aws sso login` を実行する `zsh` コマンドです。
 
 ## 前提条件
 
-- `bash`
+- `zsh`
 - `aws`（AWS CLI）
 - `fzf`
 
 ## 使い方
 
-```bash
+```zsh
 aws-login
 ```
 
 ## 動作仕様
 
 1. `aws configure list-profiles` でプロファイル一覧を取得
-2. 候補を `fzf` で選択
-3. 選択したプロファイルで `AWS_PROFILE=<profile> aws sso login` を実行
+2. 空行を除外して候補化
+3. 候補を `fzf` で選択
+4. 選択したプロファイルで `AWS_PROFILE=<profile> aws sso login` を実行
 
 ## 終了とエラー
 

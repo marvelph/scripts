@@ -1,10 +1,10 @@
 # ssh-select
 
-`ssh-select` は、`~/.ssh/config` の `Host` 一覧から接続先を選び、`ssh` または `sftp` で接続するコマンドです。
+`ssh-select` は、`~/.ssh/config` の `Host` 一覧から接続先を選び、`ssh` または `sftp` で接続する `zsh` コマンドです。
 
 ## 前提条件
 
-- `bash`
+- `zsh`
 - `fzf`
 - `ssh`（OpenSSH クライアント）
 - `sftp`（OpenSSH クライアント）
@@ -12,67 +12,38 @@
 ## 設定ファイル
 
 設定ファイルは固定で `~/.ssh/config` を参照します。
-フォーマットは OpenSSH の設定形式です。
-
 `Host` 行に定義されたホスト別名（エイリアス）が選択候補になります。
-
-次のような具体的なホスト名のみ候補になります。
-
-### 設定例
-
-```sshconfig
-Host staging
-  HostName ec2-xx-xx-xx-xx.ap-northeast-1.compute.amazonaws.com
-  User ec2-user
-  IdentityFile ~/.ssh/staging.pem
-
-Host prod
-  HostName prod.example.com
-  User ubuntu
-  IdentityFile ~/.ssh/prod.pem
-```
 
 `Host *` や `Host web-*` のようなワイルドカード定義は候補から除外されます。
 
 ## 使い方
 
-### SSH 接続（デフォルト）
-
-```bash
+```zsh
 ssh-select
-```
-
-### SFTP 接続
-
-```bash
 ssh-select --mode sftp
-# または
 ssh-select -m sftp
 ```
 
-### モード指定
+## オプション
 
-- `-m ssh`
-- `-m sftp`
+- `-m ssh|sftp`, `--mode ssh|sftp`: 接続モード指定（デフォルト: `ssh`）
+- `-h`, `--help`: ヘルプ表示
 
 ## 動作仕様
 
-1. `~/.ssh/config` を読み込む
-2. `Host` 一覧を `fzf` で表示して選択
-3. 選択したホスト別名で `ssh` または `sftp` を実行
-
-実行されるコマンド形式:
-
-- SSH: `ssh host_alias`
-- SFTP: `sftp host_alias`
+1. 引数を解析（`zparseopts`）
+2. `~/.ssh/config` を読み込み、接続可能な `Host` 候補を抽出
+3. 候補を `fzf` で選択
+4. 選択したホスト別名で `ssh` または `sftp` を `exec` 実行
 
 ## 終了とエラー
 
 - 設定ファイルが存在しない: エラー終了
 - `fzf` コマンドがない: エラー終了
+- 不正なモード指定: エラー終了
+- 不明な引数: エラー終了
 - 選択可能な `Host` 定義がない: 正常終了
 - 選択をキャンセル: 正常終了（接続しない）
-- `fzf` でキャンセル（`Esc` / `Ctrl-C`）: 正常終了
 - `fzf` 異常終了: エラー終了
 
 ## 備考
