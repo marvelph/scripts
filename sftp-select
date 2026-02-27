@@ -1,5 +1,5 @@
 #!/bin/bash
 set -euo pipefail
 
-host=$(awk '$1 == "Host" && $2 !~ /[*]/ {print $2}' ~/.ssh/config | fzf)
+host=$(awk '$1 == "Host" && $2 !~ /[*]/ { print $2 }' ~/.ssh/config | fzf)
 sftp "$host"
