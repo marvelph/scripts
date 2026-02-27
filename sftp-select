@@ -3,4 +3,3 @@ set -euo pipefail
 
 host=$(grep "^Host " ~/.ssh/config | grep -v "\*" | awk '{print $2}' | fzf)
 sftp "$host"
-

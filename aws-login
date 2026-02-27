@@ -3,4 +3,3 @@ set -euo pipefail
 
 profile=$(aws configure list-profiles | fzf)
 aws sso login --profile "$profile"
-
